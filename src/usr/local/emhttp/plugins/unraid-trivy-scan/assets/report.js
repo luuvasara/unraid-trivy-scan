@@ -348,7 +348,7 @@
     // exact: only this package's NVD matches on the OS target (a substring search would also hit titles and images)
     f.q = name; f.fix = 'all'; f.page = 1; f.pkg = { img: osN, name: name };
     if ('target' in f) f.target = osN >= 0 ? 't' + osN : 'all';
-    var qi = document.getElementById('uts-q'); if (qi) qi.value = name;
+    var qi = document.getElementById('uts-q'); if (qi) { qi.value = name; try { qi.focus({ preventScroll: true }); qi.select(); } catch (e) { /* ignore */ } }   // typing replaces it
     var fs = document.getElementById('uts-fix'); if (fs) fs.value = 'all';
     var ts = document.getElementById('uts-target'); if (ts && 'target' in f) ts.value = f.target;
     renderTable();
