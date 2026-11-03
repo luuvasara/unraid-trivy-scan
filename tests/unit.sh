@@ -6,8 +6,8 @@
 # the .plg lifecycle rules, and include/aggregate.php on fixture Trivy JSON (tests/aggregate-test.php).
 set -uo pipefail
 HERE=$(cd "$(dirname "$0")/.." && pwd)
-P=$HERE/src/usr/local/emhttp/plugins/unraid-trivy-scan
-S=$P/scripts/trivy-scan
+P=$HERE/src/usr/local/emhttp/plugins/unraid-cve-lens
+S=$P/scripts/cve-lens
 W=$HERE/tests/.work/unit; rm -rf "$W"; mkdir -p "$W/bin"
 fail=0; ok() { echo "ok   $*"; }; bad() { echo "FAIL $*"; fail=1; }
 
@@ -95,7 +95,7 @@ inv_php=$(sed -n 's/^INVALID=//p' <<<"$PHPOUT" | tr ' ' '\n' | sort | tr '\n' ' 
 [ ! -e "$W/PWN2" ] && [ ! -e "$W/PWN3" ] && [ ! -e /PWN4 ] && ok "hostile settings file executed nothing" || bad "hostile settings executed a command"
 DEF_SH=$(sed -n 's/^declare -A DEF=(\(.*\)/\1/p;/^ *\[NOTIFY\]/p' "$S" | tr -d '()' | tr ' ' '\n' | grep '^\[' | sed 's/^\[\([A-Z_]*\)\]=/\1=/; s/"//g' | sort)
 DEF_PHP=$(php -r 'require $argv[1]; $d = UTS_DEFAULTS; ksort($d); foreach ($d as $k=>$v) echo "$k=$v\n";' "$P/include/lib.php")
-[ "$DEF_SH" = "$DEF_PHP" ] && ok "defaults identical in scripts/trivy-scan and include/lib.php" || bad "defaults differ: $(tr '\n' ' ' <<<"$DEF_SH") vs $(tr '\n' ' ' <<<"$DEF_PHP")"
+[ "$DEF_SH" = "$DEF_PHP" ] && ok "defaults identical in scripts/cve-lens and include/lib.php" || bad "defaults differ: $(tr '\n' ' ' <<<"$DEF_SH") vs $(tr '\n' ' ' <<<"$DEF_PHP")"
 [ "$(UTS_CFG=$W/none.cfg bash "$S" config)" = "$DEF_PHP" ] && [ "$(UTS_CFG=$W/none.cfg php -r 'require $argv[1]; $c=uts_config(); ksort($c); foreach ($c as $k=>$v) echo "$k=$v\n";' "$P/include/lib.php")" = "$DEF_PHP" ] \
   && ok "missing settings file -> defaults" || bad "missing settings file"
 
@@ -125,7 +125,7 @@ export UTS_CRON_FILE=$W/cron/uts.cron UTS_UPDATE_CRON=$W/bin/update_cron
 printf '#!/bin/sh\necho x >>%s/update_cron.log\n' "$W" >"$W/bin/update_cron"; chmod 755 "$W/bin/update_cron"
 printf 'SCHEDULE="15 4 * * 1"\n' >"$W/a.cfg"
 UTS_CFG=$W/a.cfg bash "$S" apply >/dev/null
-[ "$(grep -v '^#' "$UTS_CRON_FILE")" = "15 4 * * 1 /usr/local/emhttp/plugins/unraid-trivy-scan/scripts/trivy-scan cron >/dev/null 2>&1" ] \
+[ "$(grep -v '^#' "$UTS_CRON_FILE")" = "15 4 * * 1 /usr/local/emhttp/plugins/unraid-cve-lens/scripts/cve-lens cron >/dev/null 2>&1" ] \
   && [ -s "$W/update_cron.log" ] && ok "apply: valid schedule -> cron file + update_cron" || bad "apply valid: $(cat "$UTS_CRON_FILE" 2>&1)"
 printf 'SCHEDULE="15 4 * * 1\n* * * * * touch %s/PWN5"\n' "$W" >"$W/a.cfg"
 UTS_CFG=$W/a.cfg bash "$S" apply >/dev/null
@@ -136,65 +136,65 @@ grep -q 'docker run\|docker pull' "$W/docker.log" 2>/dev/null && bad "apply/conf
 
 # ---------------------------------------------------------------- uninstall guards
 : >"$W/docker.log"
-mkdir -p "$W/d1/unraid-trivy-scan/cache" "$W/run"
+mkdir -p "$W/d1/unraid-cve-lens/cache" "$W/run"
 printf 'REMOVE_DATA="yes"\n' >"$W/u.cfg"
-UTS_CFG=$W/u.cfg UTS_DATA=$W/d1/unraid-trivy-scan UTS_RUN=$W/run bash "$S" uninstall >/dev/null
-[ ! -e "$W/d1/unraid-trivy-scan" ] && grep -q '^docker rmi aquasec/trivy:0.76.1@sha256:790fd66d1697395d8693d1acaa1ea702406a20f109b6fc7bac8db623eca6c06c$' "$W/docker.log" \
+UTS_CFG=$W/u.cfg UTS_DATA=$W/d1/unraid-cve-lens UTS_RUN=$W/run bash "$S" uninstall >/dev/null
+[ ! -e "$W/d1/unraid-cve-lens" ] && grep -q '^docker rmi aquasec/trivy:0.76.1@sha256:790fd66d1697395d8693d1acaa1ea702406a20f109b6fc7bac8db623eca6c06c$' "$W/docker.log" \
   && ok "uninstall REMOVE_DATA=yes: data dir removed, docker rmi of the pinned reference only" || bad "uninstall yes: $(cat "$W/docker.log")"
 mkdir -p "$W/d2/other"; UTS_CFG=$W/u.cfg UTS_DATA=$W/d2/other UTS_RUN=$W/run bash "$S" uninstall >/dev/null
-[ -d "$W/d2/other" ] && ok "uninstall: refuses a data path not ending in /unraid-trivy-scan" || bad "uninstall removed an unexpected path"
-mkdir -p "$W/victim"; touch "$W/victim/keep"; mkdir -p "$W/d3"; ln -s "$W/victim" "$W/d3/unraid-trivy-scan"
-UTS_CFG=$W/u.cfg UTS_DATA=$W/d3/unraid-trivy-scan UTS_RUN=$W/run bash "$S" uninstall >/dev/null
+[ -d "$W/d2/other" ] && ok "uninstall: refuses a data path not ending in /unraid-cve-lens" || bad "uninstall removed an unexpected path"
+mkdir -p "$W/victim"; touch "$W/victim/keep"; mkdir -p "$W/d3"; ln -s "$W/victim" "$W/d3/unraid-cve-lens"
+UTS_CFG=$W/u.cfg UTS_DATA=$W/d3/unraid-cve-lens UTS_RUN=$W/run bash "$S" uninstall >/dev/null
 [ -e "$W/victim/keep" ] && ok "uninstall: a symlinked data dir is not followed" || bad "uninstall followed a symlink"
-mkdir -p "$W/d4/unraid-trivy-scan"; : >"$W/docker.log"; printf 'REMOVE_DATA="no"\n' >"$W/u.cfg"
-UTS_CFG=$W/u.cfg UTS_DATA=$W/d4/unraid-trivy-scan UTS_RUN=$W/run bash "$S" uninstall >/dev/null
-[ -d "$W/d4/unraid-trivy-scan" ] && ! grep -q rmi "$W/docker.log" && ok "uninstall REMOVE_DATA=no keeps data and image" || bad "uninstall no"
-grep -q 'docker rm -f\|docker ps -aq --filter label=unraid-trivy-scan=1' "$W/docker.log" && ok "uninstall stops only containers labelled unraid-trivy-scan=1" || bad "uninstall label filter: $(cat "$W/docker.log")"
+mkdir -p "$W/d4/unraid-cve-lens"; : >"$W/docker.log"; printf 'REMOVE_DATA="no"\n' >"$W/u.cfg"
+UTS_CFG=$W/u.cfg UTS_DATA=$W/d4/unraid-cve-lens UTS_RUN=$W/run bash "$S" uninstall >/dev/null
+[ -d "$W/d4/unraid-cve-lens" ] && ! grep -q rmi "$W/docker.log" && ok "uninstall REMOVE_DATA=no keeps data and image" || bad "uninstall no"
+grep -q 'docker rm -f\|docker ps -aq --filter label=unraid-cve-lens=1' "$W/docker.log" && ok "uninstall stops only containers labelled unraid-cve-lens=1" || bad "uninstall label filter: $(cat "$W/docker.log")"
 
 # ---------------------------------------------------------------- OS scan: what the OS container gets
 # A fake Unraid root with the system dirs, the dirs that must never be mounted, a symlinked /opt pointing at /mnt and
 # a hostile unraid-version. `run` goes through the real script and the real aggregator; only docker is fake.
 OR=$W/osroot
 mkdir -p "$OR"/usr/bin "$OR"/lib/modules "$OR"/lib64 "$OR"/bin "$OR"/sbin "$OR"/mnt/user "$OR"/boot "$OR"/proc "$OR"/sys \
-         "$OR"/etc "$OR"/var/lib/docker "$OR"/var/lib/pkgtools/packages "$W/osdata/unraid-trivy-scan/cache/db" "$W/osrun"
+         "$OR"/etc "$OR"/var/lib/docker "$OR"/var/lib/pkgtools/packages "$W/osdata/unraid-cve-lens/cache/db" "$W/osrun"
 ln -sfn "$OR/mnt" "$OR/opt"
 touch "$OR/var/lib/pkgtools/packages/bash-5.3.003-x86_64-1" "$OR/var/lib/pkgtools/packages/docker-29.8.2-x86_64-1_LT"
-echo x >"$W/osdata/unraid-trivy-scan/cache/db/trivy.db"
+echo x >"$W/osdata/unraid-cve-lens/cache/db/trivy.db"
 osrun() {   # osrun <cfg lines...>: one offline `run` with the fake docker and the fake root
   printf '%s\n' "$@" >"$W/os.cfg"; : >"$W/docker.log"
-  UTS_CFG=$W/os.cfg UTS_DATA=$W/osdata/unraid-trivy-scan UTS_RUN=$W/osrun UTS_LOG=$W/os.log UTS_OS_ROOT=$OR \
+  UTS_CFG=$W/os.cfg UTS_DATA=$W/osdata/unraid-cve-lens UTS_RUN=$W/osrun UTS_LOG=$W/os.log UTS_OS_ROOT=$OR \
     UTS_OS_KERNEL=6.18.58-Unraid UTS_PLUGIN_DIR=$P UTS_NOTIFY=$W/none UTS_CRON_FILE=$W/os.cron bash "$S" run
 }
 printf 'version="7.3.4"\n' >"$OR/etc/unraid-version"
 osrun 'OS_SCAN="yes"' 'JAVA_DB="no"' && ok "run with OS_SCAN=yes (fake docker) exits 0" || bad "OS run rc=$?: $(tail -3 "$W/os.log")"
-OSL=$(grep -- '--label unraid-trivy-scan.role=os' "$W/docker.log")
+OSL=$(grep -- '--label unraid-cve-lens.role=os' "$W/docker.log")
 [ "$(grep -c . <<<"$OSL")" = 1 ] && ok "one OS scanner container" || bad "OS containers: $OSL"
 grep -q -- '--cap-drop ALL --security-opt no-new-privileges --network none' <<<"$OSL" && ok "OS container: --cap-drop ALL, no-new-privileges, --network none" || bad "OS hardening: $OSL"
 grep -q 'docker.sock' <<<"$OSL" && bad "OS container got the Docker socket" || ok "OS container has no Docker socket"
 TG=$(grep -o 'target=/rootfs/[a-z0-9]*,readonly,bind-recursive=disabled' <<<"$OSL" | sed 's/^target=\/rootfs\///; s/,.*//' | sort | tr '\n' ' ')
 [ "$TG" = "bin lib lib64 sbin usr " ] && ok "OS mounts: exactly /usr /lib /lib64 /bin /sbin, read-only, non-recursive (symlinked /opt skipped)" || bad "OS mounts: '$TG'"
-[ "$(grep -o -- '--mount' <<<"$OSL" | wc -l)" = 5 ] && [ "$(grep -o -- ' -v ' <<<"$OSL" | wc -l)" = 1 ] && grep -q -- "-v $W/osdata/unraid-trivy-scan/cache:/cache:ro" <<<"$OSL" \
+[ "$(grep -o -- '--mount' <<<"$OSL" | wc -l)" = 5 ] && [ "$(grep -o -- ' -v ' <<<"$OSL" | wc -l)" = 1 ] && grep -q -- "-v $W/osdata/unraid-cve-lens/cache:/cache:ro" <<<"$OSL" \
   && ok "OS container: 5 mounts plus the DB read-only, nothing else" || bad "OS extra mounts: $OSL"
 grep -qE "source=$OR/(mnt|boot|proc|sys|etc|var|dev|root|opt)|source=/(mnt|boot|proc|sys|etc|var)" <<<"$OSL" && bad "a forbidden directory was mounted" \
   || ok "never mounted: /mnt /boot /proc /sys /etc /var (incl. /var/lib/docker) /opt-symlink"
 grep -q -- 'rootfs --cache-dir /cache .*--offline-scan --scanners vuln .*--skip-dirs /rootfs/lib/modules .* /rootfs$' <<<"$OSL" \
   && ok "OS scan: trivy rootfs /rootfs, offline, vuln only, /lib/modules skipped" || bad "OS trivy args: $OSL"
-osrep() { php -r '$r=json_decode(file_get_contents($argv[1]),true); echo eval("return ".$argv[2].";"), "\n";' "$W/osdata/unraid-trivy-scan/report/report.json" "$1"; }
+osrep() { php -r '$r=json_decode(file_get_contents($argv[1]),true); echo eval("return ".$argv[2].";"), "\n";' "$W/osdata/unraid-cve-lens/report/report.json" "$1"; }
 [ "$(osrep '$r["images"][0]["kind"]." ".$r["images"][0]["name"]." ".$r["summary"]["os"]')" = "os Unraid OS 7.3.4 ok" ] && ok "report: OS target 'Unraid OS 7.3.4', scanned" || bad "report OS: $(osrep 'json_encode($r["images"])')"
 [ "$(osrep 'json_encode([$r["host"]["kernel"], $r["host"]["packages"]])')" = '["6.18.58-Unraid",[["bash","5.3.003","1"],["docker","29.8.2","1_LT"]]]' ] \
   && ok "report: kernel and the Slackware package list read on the host" || bad "report host: $(osrep 'json_encode($r["host"])')"
-[ "$(sed -n 's/^message=//p' "$W/osdata/unraid-trivy-scan/report/last-run")" = "0 image(s) and the Unraid OS scanned, 0 failed" ] && ok "last-run message names the OS" || bad "last-run: $(cat "$W/osdata/unraid-trivy-scan/report/last-run")"
+[ "$(sed -n 's/^message=//p' "$W/osdata/unraid-cve-lens/report/last-run")" = "0 image(s) and the Unraid OS scanned, 0 failed" ] && ok "last-run message names the OS" || bad "last-run: $(cat "$W/osdata/unraid-cve-lens/report/last-run")"
 printf 'version="$(touch %s/PWN6)"\n' "$W" >"$OR/etc/unraid-version"
 FAKE_OS_FAIL=1 osrun 'OS_SCAN="yes"' 'JAVA_DB="no"'
 [ ! -e "$W/PWN6" ] && [ "$(osrep '$r["images"][0]["name"]')" = "Unraid OS unknown" ] && ok "hostile unraid-version: not executed, shown as 'unknown'" || bad "hostile unraid-version"
-[ "$(osrep '$r["images"][0]["scan"]." ".$r["images"][0]["error"]')" = "failed FATAL fake failure" ] && [ "$(sed -n 's/^message=//p' "$W/osdata/unraid-trivy-scan/report/last-run")" = "0 image(s) and the Unraid OS scanned, 1 failed" ] \
+[ "$(osrep '$r["images"][0]["scan"]." ".$r["images"][0]["error"]')" = "failed FATAL fake failure" ] && [ "$(sed -n 's/^message=//p' "$W/osdata/unraid-cve-lens/report/last-run")" = "0 image(s) and the Unraid OS scanned, 1 failed" ] \
   && ok "failed OS scan: listed with Trivy's error line, counted as failed" || bad "OS failure: $(osrep 'json_encode($r["images"])')"
 osrun 'OS_SCAN="no"' 'JAVA_DB="no"'
 grep -q 'role=os' "$W/docker.log" && bad "OS_SCAN=no still ran an OS container" || ok "OS_SCAN=no: no OS container"
 [ "$(osrep 'json_encode($r["host"])." ".$r["summary"]["os"]')" = "null off" ] && ok "OS_SCAN=no: no OS target in the report" || bad "OS_SCAN=no report"
 
 # ---------------------------------------------------------------- keeping the Trivy databases, sizes for the settings page
-OSD=$W/osdata/unraid-trivy-scan
+OSD=$W/osdata/unraid-cve-lens
 mkdir -p "$OSD/cache/java-db"; echo javadb >"$OSD/cache/java-db/trivy-java.db"
 osrun 'OS_SCAN="no"' 'JAVA_DB="yes"' 'TRIVY_DB_KEEP="yes"' 'JAVA_DB_KEEP="yes"'
 [ -f "$OSD/cache/db/trivy.db" ] && [ -f "$OSD/cache/java-db/trivy-java.db" ] && ok "TRIVY_DB_KEEP=yes, JAVA_DB_KEEP=yes: both stay after the scan" || bad "kept Trivy DBs removed"
@@ -220,7 +220,7 @@ php -r 'require $argv[1]; $s = uts_db_sizes("trivy_now=1700000\njava_last=2048\n
 php -r 'require $argv[1]; echo uts_db_size([], "java", "1.5 GB"), "\n";' "$P/include/lib.php" | grep -qx 'Not downloaded yet; about 1.5 GB (estimate)' && ok "settings page size text: estimate when never downloaded" || bad "estimate text"
 
 # ---------------------------------------------------------------- OS packages against NVD CPEs (Grype)
-OSD=$W/osdata/unraid-trivy-scan
+OSD=$W/osdata/unraid-cve-lens
 GDB=$OSD/grype-run   # OS_PKG_DB_KEEP=no: per-run DB (the default is yes, like the Trivy databases)
 printf 'version="7.3.4"\n' >"$OR/etc/unraid-version"
 osrun 'OS_SCAN="yes"' 'JAVA_DB="no"' 'OS_PKG_MATCH="yes"' 'OS_PKG_DB_KEEP="no"'
@@ -230,12 +230,12 @@ export FAKE_GRYPE_DB=1
 cp "$HERE/tests/fixtures/ospkg/os/pkgmatch.json" "$W/grype.json"
 printf 'CVE-2025-9002 samba # test\n' >"$W/os-ignore.txt"   # next to the settings file ($W/os.cfg)
 osrun 'OS_SCAN="yes"' 'JAVA_DB="no"' 'OS_PKG_MATCH="yes"' 'OS_PKG_DB_KEEP="no"' && ok "run with the OS package match exits 0" || bad "pkg run: $(tail -3 "$W/os.log")"
-PL=$(grep -- '--label unraid-trivy-scan.role=pkgmatch' "$W/docker.log")
+PL=$(grep -- '--label unraid-cve-lens.role=pkgmatch' "$W/docker.log")
 [ "$(grep -c . <<<"$PL")" = 1 ] && grep -q -- "anchore/grype:v[0-9.]*@sha256:[0-9a-f]\{64\} sbom:/in/os.cdx.json -o json --by-cve -q$" <<<"$PL" \
   && ok "one match container: pinned Grype, sbom:/in/os.cdx.json, JSON" || bad "pkgmatch container: $PL"
 grep -q -- "--cap-drop ALL --security-opt no-new-privileges --user $(id -u):$(id -g) --network none --read-only" <<<"$PL" && ! grep -q 'docker.sock\|--mount' <<<"$PL" \
   && ok "match container: as the DB owner (Grype makes the DB dir mode 700), no network, read-only, no socket, no host directories" || bad "pkgmatch hardening: $PL"
-[ "$(grep -o -- ' -v [^ ]*' <<<"$PL" | sed 's/^ -v //' | sort | tr '\n' ' ')" = "$GDB:/db:ro $W/osdata/unraid-trivy-scan/work/os/os.cdx.json:/in/os.cdx.json:ro " ] \
+[ "$(grep -o -- ' -v [^ ]*' <<<"$PL" | sed 's/^ -v //' | sort | tr '\n' ' ')" = "$GDB:/db:ro $W/osdata/unraid-cve-lens/work/os/os.cdx.json:/in/os.cdx.json:ro " ] \
   && ok "match container gets exactly the Grype DB (read-only) and the SBOM (read-only)" || bad "pkgmatch mounts: $(grep -o -- ' -v [^ ]*' <<<"$PL")"
 GL=$(grep -- 'role=db' "$W/docker.log" | grep 'anchore/grype')
 grep -q -- "-v $GDB:/db anchore/grype:.* db update$" <<<"$GL" && ! grep -q 'docker.sock\|--network none' <<<"$GL" \
@@ -300,35 +300,35 @@ while IFS='|' read -r want cfg; do
   a=$(dd_sh "$cfg"); b=$(dd_php "$cfg")
   [ "$a" = "$want" ] && [ "$b" = "$want" ] && ok "datadir '${cfg//$'\n'/ ; }' -> $want (bash and PHP)" || bad "datadir '$cfg': want $want, bash '$a', php '$b'"
 done <<'CASES'
-/mnt/user/appdata/unraid-trivy-scan|DOCKER_APP_CONFIG_PATH="/mnt/user/appdata/"\nDOCKER_APP_UNRAID_PATH=""\n
-/mnt/cache/appdata/unraid-trivy-scan|DOCKER_APP_CONFIG_PATH="/mnt/cache/appdata/"\n
-/mnt/fast_pool/docker-appdata/unraid-trivy-scan|DOCKER_APP_CONFIG_PATH=/mnt/fast_pool/docker-appdata\n
-/mnt/cache/b/unraid-trivy-scan|A=1\nDOCKER_APP_CONFIG_PATH="/mnt/user/a"\nDOCKER_APP_CONFIG_PATH="/mnt/cache/b/"\n
-/mnt/user/appdata/unraid-trivy-scan|DOCKER_ENABLED="yes"\n
-/mnt/user/appdata/unraid-trivy-scan|DOCKER_APP_CONFIG_PATH=""\n
-/mnt/user/appdata/unraid-trivy-scan|DOCKER_APP_CONFIG_PATH="/etc/appdata"\n
-/mnt/user/appdata/unraid-trivy-scan|DOCKER_APP_CONFIG_PATH="/mnt/user/../../etc"\n
-/mnt/user/appdata/unraid-trivy-scan|DOCKER_APP_CONFIG_PATH="/mnt/user/a b"\n
-/mnt/user/appdata/unraid-trivy-scan|DOCKER_APP_CONFIG_PATH="/mnt/user/a:/b"\n
-/mnt/user/appdata/unraid-trivy-scan|DOCKER_APP_CONFIG_PATH="/mnt/user/$(id)"\n
-/mnt/user/appdata/unraid-trivy-scan|DOCKER_APP_CONFIG_PATH="/mnt/"\n
-/mnt/user/appdata/unraid-trivy-scan|DOCKER_APP_CONFIG_PATH="/mnt/user//x"\n
+/mnt/user/appdata/unraid-cve-lens|DOCKER_APP_CONFIG_PATH="/mnt/user/appdata/"\nDOCKER_APP_UNRAID_PATH=""\n
+/mnt/cache/appdata/unraid-cve-lens|DOCKER_APP_CONFIG_PATH="/mnt/cache/appdata/"\n
+/mnt/fast_pool/docker-appdata/unraid-cve-lens|DOCKER_APP_CONFIG_PATH=/mnt/fast_pool/docker-appdata\n
+/mnt/cache/b/unraid-cve-lens|A=1\nDOCKER_APP_CONFIG_PATH="/mnt/user/a"\nDOCKER_APP_CONFIG_PATH="/mnt/cache/b/"\n
+/mnt/user/appdata/unraid-cve-lens|DOCKER_ENABLED="yes"\n
+/mnt/user/appdata/unraid-cve-lens|DOCKER_APP_CONFIG_PATH=""\n
+/mnt/user/appdata/unraid-cve-lens|DOCKER_APP_CONFIG_PATH="/etc/appdata"\n
+/mnt/user/appdata/unraid-cve-lens|DOCKER_APP_CONFIG_PATH="/mnt/user/../../etc"\n
+/mnt/user/appdata/unraid-cve-lens|DOCKER_APP_CONFIG_PATH="/mnt/user/a b"\n
+/mnt/user/appdata/unraid-cve-lens|DOCKER_APP_CONFIG_PATH="/mnt/user/a:/b"\n
+/mnt/user/appdata/unraid-cve-lens|DOCKER_APP_CONFIG_PATH="/mnt/user/$(id)"\n
+/mnt/user/appdata/unraid-cve-lens|DOCKER_APP_CONFIG_PATH="/mnt/"\n
+/mnt/user/appdata/unraid-cve-lens|DOCKER_APP_CONFIG_PATH="/mnt/user//x"\n
 CASES
-[ "$(UTS_DOCKER_CFG=$W/nonexistent.cfg bash "$S" datadir)" = /mnt/user/appdata/unraid-trivy-scan ] && ok "datadir: no docker.cfg -> /mnt/user/appdata/unraid-trivy-scan" || bad "datadir without docker.cfg"
+[ "$(UTS_DOCKER_CFG=$W/nonexistent.cfg bash "$S" datadir)" = /mnt/user/appdata/unraid-cve-lens ] && ok "datadir: no docker.cfg -> /mnt/user/appdata/unraid-cve-lens" || bad "datadir without docker.cfg"
 # array stopped / location missing: nothing is created, not even last-run (mkdir -p would build /mnt/... in RAM)
 printf '#!/bin/sh\nexit 1\n' >"$W/bin/docker-down"; MISSING=$W/not-mounted/appdata
-PATH="$W/bin:$PATH" UTS_DATA=$MISSING/unraid-trivy-scan UTS_RUN=$W/run-miss UTS_LOG=$W/miss.log UTS_CFG=$W/none.cfg bash "$S" run
+PATH="$W/bin:$PATH" UTS_DATA=$MISSING/unraid-cve-lens UTS_RUN=$W/run-miss UTS_LOG=$W/miss.log UTS_CFG=$W/none.cfg bash "$S" run
 RC=$?
 [ "$RC" = 1 ] && [ ! -e "$W/not-mounted" ] && grep -q 'does not exist' "$W/miss.log" && ok "missing appdata parent: scan refuses (rc 1), logs why, creates nothing" || bad "missing parent: rc=$RC, $(ls "$W/not-mounted" 2>&1), $(cat "$W/miss.log" 2>&1)"
 FDOCK=$W/bin2; mkdir -p "$FDOCK"; printf '#!/bin/sh\nexit 1\n' >"$FDOCK/docker"; chmod 755 "$FDOCK/docker"
-PATH="$FDOCK:$PATH" UTS_DATA=$MISSING/unraid-trivy-scan UTS_RUN=$W/run-miss UTS_LOG=$W/miss.log UTS_CFG=$W/none.cfg bash "$S" run
+PATH="$FDOCK:$PATH" UTS_DATA=$MISSING/unraid-cve-lens UTS_RUN=$W/run-miss UTS_LOG=$W/miss.log UTS_CFG=$W/none.cfg bash "$S" run
 [ ! -e "$W/not-mounted" ] && ok "Docker down AND appdata missing: still nothing created (array-stopped cron run)" || bad "created $W/not-mounted"
-grep -q 'uts_path(.data.))' "$P/TrivyScanSettings.page" && ! grep -q '<code>/mnt/user/appdata' "$P/TrivyScanSettings.page" && ok "settings page shows the real data directory" || bad "settings page hard-codes the data path"
+grep -q 'uts_path(.data.))' "$P/CveLensSettings.page" && ! grep -q '<code>/mnt/user/appdata' "$P/CveLensSettings.page" && ok "settings page shows the real data directory" || bad "settings page hard-codes the data path"
 
 # ---------------------------------------------------------------- the report step runs out of memory
 # On a 51-image server PHP hit Unraid's default memory_limit and, with Unraid's php.ini, printed nothing: the log said
 # only "aggregate: ". Here a 16 MB Trivy result against a 16M limit.
-OSD=$W/osdata/unraid-trivy-scan
+OSD=$W/osdata/unraid-cve-lens
 printf 'version="7.3.4"\n' >"$OR/etc/unraid-version"
 php -r '$v=[]; for($i=0;$i<40000;$i++) $v[]=["VulnerabilityID"=>"CVE-2024-".(10000+$i),"PkgName"=>"p$i","InstalledVersion"=>"1","Severity"=>"HIGH","Title"=>str_repeat("x",300)];
         file_put_contents($argv[1], json_encode(["SchemaVersion"=>2,"Results"=>[["Target"=>"t","Vulnerabilities"=>$v]]]));' "$W/big.json"
@@ -342,9 +342,9 @@ FAKE_OS_JSON=$W/big.json osrun 'OS_SCAN="yes"' 'JAVA_DB="no"'
 
 # Header tabs (Menu="Tasks:n"): Unraid labels them with the page's Name, else the upper-cased file name
 # (read on a 7.3.4 server: dynamix/include/DefaultPageLayout/Navigation/Main.php:23 `_(_var($button, 'Name', $pageName))`).
-# 2026.11.01c shipped TrivyScanTab.page without Name and showed "TRIVYSCANTAB". The browser title (DefaultPageLayout.php:
+# 2026.11.01c shipped CveLensTab.page without Name and showed "TRIVYSCANTAB". The browser title (DefaultPageLayout.php:
 # <title>NAME/$myPage['name']</title>) and the URL still use the file name, so up to 2026.11.02 the selected tab read
-# "Tower/TrivyScanTab"; the file is now named after the label.
+# "Tower/CveLensTab"; the file is now named after the label.
 for f in "$P"/*.page; do
   if grep -Eq '^Menu="Tasks(:[0-9]+)?"' "$f"; then
     grep -Eq '^Name="[A-Za-z][A-Za-z ]+"$' "$f" && ok "Tasks page $(basename "$f") has a Name (header tab label)" || bad "Tasks page $(basename "$f") has no Name: the tab would show the file name"
@@ -352,28 +352,28 @@ for f in "$P"/*.page; do
     [ "$(basename "$f" .page)" = "${nm// /}" ] && ok "Tasks page file name matches its Name ($nm): browser title and URL read the same" || bad "Tasks page $(basename "$f") is not named after its Name '$nm'"
   fi
 done
-[ ! -e "$P/TrivyScanTab.page" ] && ! grep -rq 'TrivyScanTab' "$P" && ok "no reference to the old TrivyScanTab page name left" || bad "TrivyScanTab still referenced"
+[ ! -e "$P/CveLensTab.page" ] && ! grep -rq 'CveLensTab' "$P" && ok "no reference to the old CveLensTab page name left" || bad "CveLensTab still referenced"
 
 # ---------------------------------------------------------------- .plg lifecycle
-PLG=$HERE/unraid-trivy-scan.plg
+PLG=$HERE/unraid-cve-lens.plg
 INST=$(php -r '$d=new DOMDocument(); $d->substituteEntities=true; $d->load($argv[1], LIBXML_NOENT); foreach ($d->getElementsByTagName("FILE") as $f) { if ($f->getAttribute("Method")==="remove") continue; foreach ($f->getElementsByTagName("INLINE") as $i) echo $i->textContent, "\n"; }' "$PLG")
 REM=$(php -r '$d=new DOMDocument(); $d->load($argv[1], LIBXML_NOENT); foreach ($d->getElementsByTagName("FILE") as $f) if ($f->getAttribute("Method")==="remove") foreach ($f->getElementsByTagName("INLINE") as $i) echo $i->textContent;' "$PLG")
-grep -Eq 'trivy-scan (start|run|cron|update-db)|docker (pull|run)' <<<"$INST" && bad "install/boot block starts a scan or a download" || ok "install/boot blocks never scan or download"
-grep -q 'trivy-scan stop' <<<"$INST" && grep -q 'trivy-scan apply' <<<"$INST" && ok "pre-install stops a running scan, post-install only applies cron" || bad "install block stop/apply"
-grep -q 'trivy-scan uninstall' <<<"$REM" && ok "remove block runs uninstall (stop, cron, optional cleanup)" || bad "remove block"
-grep -q 'case $f in \*/unraid-trivy-scan-2026[^)]*-x86_64-1.txz) ;;' <<<"$INST" && ok "old-package cleanup keeps the version being installed" || bad "package cleanup not version-preserving"
+grep -Eq 'cve-lens (start|run|cron|update-db)|docker (pull|run)' <<<"$INST" && bad "install/boot block starts a scan or a download" || ok "install/boot blocks never scan or download"
+grep -q 'cve-lens stop' <<<"$INST" && grep -q 'cve-lens apply' <<<"$INST" && ok "pre-install stops a running scan, post-install only applies cron" || bad "install block stop/apply"
+grep -q 'cve-lens uninstall' <<<"$REM" && ok "remove block runs uninstall (stop, cron, optional cleanup)" || bad "remove block"
+grep -q 'case $f in \*/unraid-cve-lens-2026[^)]*-x86_64-1.txz) ;;' <<<"$INST" && ok "old-package cleanup keeps the version being installed" || bad "package cleanup not version-preserving"
 grep -q 'pluginURL="&pluginURL;"' "$PLG" && grep -q '<!ENTITY gitURL    "https://raw.githubusercontent.com/luuvasara/unraid-trivy-scan/main">' "$PLG" \
-  && grep -q '<!ENTITY pluginURL "&gitURL;/&name;.plg">' "$PLG" && ok "pluginURL = .../luuvasara/unraid-trivy-scan/main/unraid-trivy-scan.plg" || bad "pluginURL"
+  && grep -q '<!ENTITY pluginURL "&gitURL;/&name;.plg">' "$PLG" && ok "pluginURL = .../luuvasara/unraid-trivy-scan/main/unraid-cve-lens.plg" || bad "pluginURL"
 VER=$(sed -n 's/^ *<!ENTITY version *"\([^"]*\)">.*/\1/p' "$PLG")
 [[ $VER =~ ^[0-9]{4}\.[0-9]{2}\.[0-9]{2}[a-z]?$ ]] && ok "version $VER is YYYY.MM.DD[a-z]" || bad "version $VER"
-MD5=$(sed -n 's/^ *<!ENTITY md5 *"\([^"]*\)">.*/\1/p' "$PLG"); PKG=$HERE/packages/unraid-trivy-scan-$VER-x86_64-1.txz
+MD5=$(sed -n 's/^ *<!ENTITY md5 *"\([^"]*\)">.*/\1/p' "$PLG"); PKG=$HERE/packages/unraid-cve-lens-$VER-x86_64-1.txz
 [ -f "$PKG" ] && [ "$(md5sum <"$PKG" | cut -d' ' -f1)" = "$MD5" ] && [ "$(cut -d' ' -f1 "$PKG.md5")" = "$MD5" ] \
   && ok "package and .md5 match the .plg &md5;" || bad "package md5 (run ./build.sh)"
-cmp -s <(tar -xJOf "$PKG" ./usr/local/emhttp/plugins/unraid-trivy-scan/scripts/trivy-scan) "$S" && ok "package contains the current scripts/trivy-scan" || bad "package is stale (run ./build.sh)"
+cmp -s <(tar -xJOf "$PKG" ./usr/local/emhttp/plugins/unraid-cve-lens/scripts/cve-lens) "$S" && ok "package contains the current scripts/cve-lens" || bad "package is stale (run ./build.sh)"
 [ -x "$P/event/stopping_docker" ] && ok "event/stopping_docker is executable in the tree (emhttp_event runs only executable files)" || bad "event/stopping_docker not executable"
-grep -q 'chmod 755 /usr/local/emhttp/plugins/unraid-trivy-scan/event/stopping_docker' <<<"$INST" && ok "post-install sets 755 on the event script" || bad "post-install does not chmod the event script"
+grep -q 'chmod 755 /usr/local/emhttp/plugins/unraid-cve-lens/event/stopping_docker' <<<"$INST" && ok "post-install sets 755 on the event script" || bad "post-install does not chmod the event script"
 PKG_LIST=$(tar -tJvf "$PKG")   # list first: "tar | grep -q" under pipefail fails at random when grep exits early (SIGPIPE)
-grep -q '^-rwxr-xr-x 0/0 .* ./usr/local/emhttp/plugins/unraid-trivy-scan/event/stopping_docker$' <<<"$PKG_LIST" \
+grep -q '^-rwxr-xr-x 0/0 .* ./usr/local/emhttp/plugins/unraid-cve-lens/event/stopping_docker$' <<<"$PKG_LIST" \
   && ok "package ships event/stopping_docker as -rwxr-xr-x root/root" || bad "package lacks an executable event/stopping_docker: $(tar -tJvf "$PKG" | grep event)"
 grep -c 'TRIVY_IMAGE=' "$S" | grep -qx 1 && ! grep -rq 'aquasec/trivy:' "$P" --include=*.php --include=*.page && ok "the Trivy image is named in exactly one place" || bad "Trivy image named in more than one place"
 
@@ -382,7 +382,7 @@ php "$HERE/tests/aggregate-test.php" "$HERE" || fail=1
 php "$HERE/tests/osinventory-test.php" "$HERE" || fail=1
 grep -c 'GRYPE_IMAGE=' "$S" | grep -qx 1 && ! grep -rq 'anchore/grype:' "$P" --include=*.php --include=*.page && ok "the Grype image is named in exactly one place" || bad "Grype image named in more than one place"
 
-# Every literal status message must survive clean() (scripts/trivy-scan), which turns any other character into '?':
+# Every literal status message must survive clean() (scripts/cve-lens), which turns any other character into '?':
 # 2026.11.02 showed "scan stopped before it finished? the previous report is kept" because of a ';'.
 bad_msgs=$(grep -oE 'last_run [a-z]+ "[^"$]*"' "$S" | sed -E 's/^last_run [a-z]+ "(.*)"$/\1/' | LC_ALL=C grep -n "[^A-Za-z0-9._/:@ ()+,=-]")
 [ -z "$bad_msgs" ] && ok "status messages contain only characters clean() keeps" || bad "status messages clean() would mangle: $bad_msgs"

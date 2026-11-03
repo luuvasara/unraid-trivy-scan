@@ -1,4 +1,4 @@
-# Trivy Scan for Unraid
+# CVE Lens for Unraid
 
 An Unraid plugin that scans the images of your Docker containers, and the Unraid OS itself, for known
 vulnerabilities with [Trivy](https://github.com/aquasecurity/trivy), and shows the result as one row per CVE: which
@@ -29,16 +29,16 @@ machine. They are not from a real Unraid server; see [Status](#status).
 Plugins, Install Plugin, paste:
 
 ```
-https://raw.githubusercontent.com/luuvasara/unraid-trivy-scan/main/unraid-trivy-scan.plg
+https://raw.githubusercontent.com/luuvasara/unraid-trivy-scan/main/unraid-cve-lens.plg
 ```
 
 Requires Unraid 7.0 or later. Nothing is scanned or downloaded at install time or at boot. Open
-**Settings, Trivy Scan** and press **Scan now**, or set a schedule.
+**Settings, CVE Lens** and press **Scan now**, or set a schedule.
 
 The first scan downloads the pinned Trivy image (about 60 MB) and the vulnerability database (about 1.6 GB on
 disk), plus about 1.5 GB for the Java database unless you turn that off, and, for the OS package match, the pinned
-Grype image and its database (about 3.1 GB on disk). All of it goes to the data directory, `<Docker appdata>/unraid-trivy-scan`. Under
-**Settings, Trivy Scan, Databases** you choose for each database whether it is kept there between scans (then it is
+Grype image and its database (about 3.1 GB on disk). All of it goes to the data directory, `<Docker appdata>/unraid-cve-lens`. Under
+**Settings, CVE Lens, Databases** you choose for each database whether it is kept there between scans (then it is
 only refreshed when a newer build exists, about daily) or downloaded for every scan and deleted afterwards; the page
 shows each one's size (on disk now, at its last download, or an estimate). Default: all three are kept (the Grype
 database is a download of about 200 MB that unpacks to about 3.1 GB). See [Databases](#databases).
@@ -50,7 +50,7 @@ database is a download of about 200 MB that unpacks to about 3.1 GB). See [Datab
   image" and that the container needs to be recreated).
 - Trivy is pinned by version **and** digest (`aquasec/trivy:0.76.1@sha256:790fd66d…c06c`, the multi-arch index
   digest, identical on Docker Hub and GHCR). A digest cannot be re-pointed, so a later push to a tag never runs on
-  your server. The reference is in one place, `TRIVY_IMAGE` in `scripts/trivy-scan`.
+  your server. The reference is in one place, `TRIVY_IMAGE` in `scripts/cve-lens`.
 - Optional registry check: scans the image each container's tag points to in its registry today and marks the CVEs
   a newer image no longer has ("Fixed in a newer image").
 - Optional scan of the Unraid OS itself (on by default): the Go programs, Node.js packages (including the Unraid
@@ -72,8 +72,8 @@ database is a download of about 200 MB that unpacks to about 3.1 GB). See [Datab
 
 ## How it works
 
-`scripts/trivy-scan` runs every scan. It starts Trivy in short-lived containers, all labelled
-`unraid-trivy-scan=1` plus a per-run label, all with `--cap-drop ALL` and `no-new-privileges`:
+`scripts/cve-lens` runs every scan. It starts Trivy in short-lived containers, all labelled
+`unraid-cve-lens=1` plus a per-run label, all with `--cap-drop ALL` and `no-new-privileges`:
 
 | Role | Network | Docker socket | Databases | Registry logins |
 |---|---|---|---|---|
@@ -103,7 +103,7 @@ is defence in depth, not a sandbox. Mounting the socket `:ro` would not restrict
 not pretend it does.
 
 Results are Trivy's JSON output, merged by `include/aggregate.php` into one report
-(`/mnt/user/appdata/unraid-trivy-scan/report/report.json`). Every string from Trivy output is treated as untrusted:
+(`/mnt/user/appdata/unraid-cve-lens/report/report.json`). Every string from Trivy output is treated as untrusted:
 types checked, length capped, control characters removed, advisory links kept only when they are plain `https://`
 URLs. The report page draws everything with `textContent`.
 
@@ -157,11 +157,11 @@ version, the same way on both bases:
    Packages without a mapping are not guessed: a wrong vendor/product pair gives false findings. They are listed in
    the report, unchecked. Go programs and Node.js packages are left to the Trivy scan, which reads their exact
    module versions.
-3. **Matching.** The pinned `anchore/grype` image (version and index digest in `GRYPE_IMAGE`, `scripts/trivy-scan`)
+3. **Matching.** The pinned `anchore/grype` image (version and index digest in `GRYPE_IMAGE`, `scripts/cve-lens`)
    matches the SBOM against its NVD data, offline.
 4. **Backports.** NVD only knows upstream versions, so a fix backported into the same version is still reported.
    On RPM systems, a CVE id named in the package's changelog is taken as fixed (that is how Fedora documents
-   backports). On either base, `/boot/config/plugins/unraid-trivy-scan/os-ignore.txt` hides CVEs: one per line,
+   backports). On either base, `/boot/config/plugins/unraid-cve-lens/os-ignore.txt` hides CVEs: one per line,
    `CVE-2025-1234 [package] [# note]`. The report lists every hidden match and the reason.
 5. **Entries NVD cannot place.** Some NVD records name a product but no version range, so Grype reports them for
    every version ("none (unknown)" in its output), and some carry NVD's `** DISPUTED **` marker. Neither says
@@ -171,7 +171,7 @@ version, the same way on both bases:
 6. **Notifications.** OS package matches never trigger the "new fixable critical" notification: the packages come
    with Unraid and cannot be updated on their own, and a fix may already be backported. They are in the report.
 
-Local additions: `/boot/config/plugins/unraid-trivy-scan/cpe-map.txt`, same format as the shipped file; a line there
+Local additions: `/boot/config/plugins/unraid-cve-lens/cpe-map.txt`, same format as the shipped file; a line there
 replaces the shipped one for that name, and `<name> -` switches a mapping off.
 
 Limits, plainly: the match is only as good as NVD's CPE data (NVD's analysis backlog since 2024 means some recent
@@ -204,7 +204,7 @@ What a scan of the official 7.3.4 release found (test machine, 2026-10-31, vulne
 
 ## Settings
 
-Stored on the flash drive in `/boot/config/plugins/unraid-trivy-scan/unraid-trivy-scan.cfg` as plain
+Stored on the flash drive in `/boot/config/plugins/unraid-cve-lens/unraid-cve-lens.cfg` as plain
 `KEY="value"` lines. The file is read as data, never executed, both by the scan script and by the pages. Every
 value is checked when the form is saved (the save is refused if anything is invalid) and again whenever it is read
 (an invalid value falls back to its default and the settings page says so).
@@ -242,15 +242,15 @@ An invalid schedule never reaches cron; with no valid schedule there is no cron 
 ## Command line
 
 ```
-/usr/local/emhttp/plugins/unraid-trivy-scan/scripts/trivy-scan start|stop|status|update-db|apply|config|image
+/usr/local/emhttp/plugins/unraid-cve-lens/scripts/cve-lens start|stop|status|update-db|apply|config|image
 ```
 
-Log: `/var/log/unraid-trivy-scan.log`.
+Log: `/var/log/unraid-cve-lens.log`.
 
 ## Building and testing
 
 ```
-./build.sh                 # packages/unraid-trivy-scan-<version>-x86_64-1.txz + .md5, fills &md5; in the .plg
+./build.sh                 # packages/unraid-cve-lens-<version>-x86_64-1.txz + .md5, fills &md5; in the .plg
 tests/run-tests.sh         # lint, unit and render tests (offline)
 tests/run-tests.sh --e2e   # plus the end-to-end test against the local Docker
 ```
@@ -303,7 +303,7 @@ release files in `tests/e2e.sh`, so the number of findings it gives there is not
 
 ## Thanks
 
-Thanks to Xaero for the original trivy-scan plugin on the Unraid forums, which this one is built on.
+Thanks to Xaero for the original cve-lens plugin on the Unraid forums, which this one is built on.
 
 ## License
 

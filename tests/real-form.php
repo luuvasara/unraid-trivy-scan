@@ -1,7 +1,7 @@
 <?php
 // real-form.php <settings.page> [KEY=value ...] - renders the Settings page body (as PageBuilder evaluates it) and prints
 // what a browser would POST for its <form>: every named input/select, selected option values, with KEY=value overrides.
-// Prints the form's action on the first line. Test tooling only. $docroot must hold plugins/unraid-trivy-scan (cwd).
+// Prints the form's action on the first line. Test tooling only. $docroot must hold plugins/unraid-cve-lens (cwd).
 $page = $argv[1]; $over = [];
 foreach (array_slice($argv, 2) as $a) { [$k, $v] = explode('=', $a, 2); $over[$k] = $v; }
 $docroot = getcwd(); $var = ['csrf_token' => 'SHOULD-NOT-BE-USED'];

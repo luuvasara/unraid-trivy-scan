@@ -2,8 +2,8 @@
 /* tests/osinventory-test.php <repo>: include/osinventory.php on tests/fixtures/osinv (a Slackware package list, an RPM
  * query with changelogs, a user CPE map). Prints "ok"/"FAIL" lines; exit 1 on any failure. Work in tests/.work/inv. */
 $repo = $argv[1];
-$inv = "$repo/src/usr/local/emhttp/plugins/unraid-trivy-scan/include/osinventory.php";
-$map = "$repo/src/usr/local/emhttp/plugins/unraid-trivy-scan/include/cpe-map.txt";
+$inv = "$repo/src/usr/local/emhttp/plugins/unraid-cve-lens/include/osinventory.php";
+$map = "$repo/src/usr/local/emhttp/plugins/unraid-cve-lens/include/cpe-map.txt";
 $fx = "$repo/tests/fixtures/osinv";
 $w = "$repo/tests/.work/inv";
 $fail = 0;

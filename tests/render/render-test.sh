@@ -12,7 +12,7 @@
 # aggregated tests/fixtures/basic. Screenshots: docs/screenshots/ (SHOTS=<dir> to change).
 set -uo pipefail
 HERE=$(cd "$(dirname "$0")/../.." && pwd)
-P=$HERE/src/usr/local/emhttp/plugins/unraid-trivy-scan
+P=$HERE/src/usr/local/emhttp/plugins/unraid-cve-lens
 W=$HERE/tests/.work/render; rm -rf "$W"; mkdir -p "$W"
 SHOTS=${SHOTS:-$HERE/docs/screenshots}; mkdir -p "$SHOTS"
 CHROME=${CHROME:-google-chrome}
@@ -29,7 +29,7 @@ scenario() {   # scenario <name> <port> <theme>: webroot + env + php -S in the b
   local d=$W/$name
   mkdir -p "$d/webroot/plugins" "$d/data/report" "$d/run"
   ln -sfn "$HERE/tests/.work/webgui/webGui" "$d/webroot/webGui"
-  ln -sfn "$P" "$d/webroot/plugins/unraid-trivy-scan"
+  ln -sfn "$P" "$d/webroot/plugins/unraid-cve-lens"
   [ -f "$d/varini" ] || printf 'csrf_token="0123456789ABCDEF"\n' >"$d/varini"
   printf '#!/bin/sh\necho "$*" >>%s/stub.log\ncase "$1" in image) echo "aquasec/trivy:0.76.1@sha256:790fd66d1697395d8693d1acaa1ea702406a20f109b6fc7bac8db623eca6c06c" ;; *) echo "scan started" ;; esac\n' "$d" >"$d/stub"
   chmod 755 "$d/stub"
@@ -48,7 +48,7 @@ H=$W/hostile; mkdir -p "$H"
 python3 -I "$HERE/tests/fixtures/hostile.py" "$H"
 php "$P/include/aggregate.php" "$H/work" "$H/data/report/report.json" "registry=yes" "trivy=0.76.1<script>x</script>" >/dev/null \
   || bad "aggregate hostile"
-bash -c 'exec -a trivy-scan-harness sleep 300' & PIDS+=($!); echo $! >"$H/run/pid"    # makes the scan look "running"
+bash -c 'exec -a cve-lens-harness sleep 300' & PIDS+=($!); echo $! >"$H/run/pid"    # makes the scan look "running"
 scenario hostile 18731 black
 wait_up 18731 || { echo "FAIL harness did not start: $(cat "$H/php.log")"; exit 1; }
 B=http://127.0.0.1:18731
@@ -78,14 +78,14 @@ grep -q 'x.test' <<<"$DOM" && bad "report: URL with a quote was kept" || ok "rep
 DOM=$(dom "$B/?tab=1"); no_payload "report DOM (default filters)" "$DOM"
 grep -q '>CVE-2024-0101<' <<<"$DOM" && ! grep -q '>CVE-2024-0100<' <<<"$DOM" && grep -q 'without a fix hidden' <<<"$DOM" \
   && ok "report default filters: fixable CVE shown, CVE without a fix hidden (and counted)" || bad "report default filters"
-SJ=$(curl -s "$B/plugins/unraid-trivy-scan/include/status.php")
+SJ=$(curl -s "$B/plugins/unraid-cve-lens/include/status.php")
 php -r '$j=json_decode($argv[1],true); exit(($j["running"]??false)===true && $j["done"]===1 && $j["total"]===2 ? 0 : 1);' "$SJ" \
   && ok "status.php: running, 1 of 2" || bad "status.php: $SJ"
 grep -q '<script\|<img' <<<"$SJ" && bad "status.php emits raw markup" || ok "status.php JSON has markup hex-escaped"
 shot "$B/?tab=1#open=CVE-2024-0101" 1400,1300 "$W/hostile-report.png" && ok "hostile report screenshot (tests/.work)" || bad "hostile screenshot"
 
 # ---------------------------------------------------------------- action endpoint
-A=$B/plugins/unraid-trivy-scan/include/action.php
+A=$B/plugins/unraid-cve-lens/include/action.php
 code() { curl -s -o /dev/null -w '%{http_code}' "$@"; }
 [ "$(code "$A")" = 405 ] && ok "action.php: GET refused (405)" || bad "action.php GET"
 [ "$(code -d action=start "$A")" = 403 ] && ok "action.php: no csrf_token refused (403)" || bad "action.php no token"
@@ -94,7 +94,7 @@ code() { curl -s -o /dev/null -w '%{http_code}' "$@"; }
 [ "$(code -d 'action[]=start' -d csrf_token=0123456789ABCDEF "$A")" = 400 ] && ok "action.php: array action refused (400)" || bad "action.php array"
 : >"$H/stub.log"
 [ "$(code -d action=start -d csrf_token=0123456789ABCDEF "$A")" = 200 ] && [ "$(cat "$H/stub.log")" = start ] \
-  && ok "action.php: start runs 'trivy-scan start' with a fixed argument" || bad "action.php start: $(cat "$H/stub.log")"
+  && ok "action.php: start runs 'cve-lens start' with a fixed argument" || bad "action.php start: $(cat "$H/stub.log")"
 
 # ---------------------------------------------------------------- demo screenshots (light + dark)
 for theme in white black; do

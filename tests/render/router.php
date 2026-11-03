@@ -6,10 +6,10 @@
  * evaluates them; the plugin's endpoints run unmodified too, against the UTS_* paths set by render-test.sh. */
 $theme = getenv('THEME') ?: 'black';
 $webroot = getenv('WEBROOT');
-$plug = "$webroot/plugins/unraid-trivy-scan";
+$plug = "$webroot/plugins/unraid-cve-lens";
 $uri = parse_url($_SERVER['REQUEST_URI'], PHP_URL_PATH);
 
-if (preg_match('~^/plugins/unraid-trivy-scan/include/(status|report|action)\.php$~', $uri, $m)) {
+if (preg_match('~^/plugins/unraid-cve-lens/include/(status|report|action)\.php$~', $uri, $m)) {
   require "$plug/include/{$m[1]}.php";
   return true;
 }
@@ -36,7 +36,7 @@ $styles = ['default-fonts', 'default-cases', 'font-awesome', 'default-color-pale
 <body>
 <?php if ($uri === '/Dashboard'): ?>
 <div class="frame"><div class="grid"><div class="tile" id="tile3"><table id="db_box3" class="dashboard">
-<?php run_page("$plug/TrivyScanDash.page"); foreach (($mytiles ?? []) as $t) echo $t['column3'] ?? ''; ?>
+<?php run_page("$plug/CveLensDash.page"); foreach (($mytiles ?? []) as $t) echo $t['column3'] ?? ''; ?>
 </table></div></div></div>
 <?php else: $sel = (int)($_GET['tab'] ?? 1); ?>
 <div id="displaybox">
@@ -48,7 +48,7 @@ $styles = ['default-fonts', 'default-cases', 'font-awesome', 'default-color-pale
   </div></nav>
   <section id="tab<?=$sel?>-panel" role="tabpanel" aria-labelledby="tab<?=$sel?>" class="tab-content content" tabindex="0" style="display:block">
     <?php /* display:block stands in for Unraid's tab script, which reveals the selected panel */ ?>
-    <?php run_page($sel === 2 ? "$plug/TrivyScanSettings.page" : "$plug/TrivyScanReport.page"); ?>
+    <?php run_page($sel === 2 ? "$plug/CveLensSettings.page" : "$plug/CveLensReport.page"); ?>
   </section>
 </div>
 <?php endif; ?>
