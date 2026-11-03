@@ -45,6 +45,7 @@ REG_AUTH=${UTS_REG_AUTH:-/root/.docker/config.json}
 NOTIFY_BIN=${UTS_NOTIFY:-/usr/local/emhttp/webGui/scripts/notify}
 UPDATE_CRON=${UTS_UPDATE_CRON:-/usr/local/sbin/update_cron}
 PHP=${UTS_PHP:-php}
+AGG_MEMORY=${UTS_AGG_MEMORY:-2048M}   # PHP memory_limit for building the report (tests: a small value)
 OS_ROOT=${UTS_OS_ROOT:-}              # tests: a local copy of an Unraid root filesystem instead of /
 OS_KERNEL=${UTS_OS_KERNEL:-}          # tests: kernel version of that copy (default: uname -r)
 PS_FILTER=${UTS_PS_FILTER:-}          # tests: restrict the container list (docker ps --filter value)
@@ -318,6 +319,10 @@ scan_os() {   # writes $WORK/os/{result,packages.txt,os.json,os.err}; needs $RUN
 }
 
 # ---------------------------------------------------------------- the scan
+# The results of a run whose report could not be built are kept in $DATA/work-failed (one copy, never a symlink).
+drop_failed_work() { local d=$DATA/work-failed; if [ -d "$d" ] && [ ! -L "$d" ]; then rm -rf -- "$d"; fi; return 0; }
+keep_failed_work() { drop_failed_work; [ ! -e "$DATA/work-failed" ] && mv -f -- "$WORK" "$DATA/work-failed"; }
+
 on_signal() {
   log "stop requested"
   [ -n "$CHILD" ] && kill "$CHILD" 2>/dev/null
@@ -440,8 +445,22 @@ do_run() {
 
   progress report "$done" "$total" ""
   local out new
-  if ! out=$("$PHP" "$PLUGIN_DIR/include/aggregate.php" "$WORK" "$DATA/report/report.json" \
-        "scope=${C[SCOPE]}" "registry=${C[REGISTRY_CHECK]}" "trivy=${TRIVY_IMAGE#*:}" "cache=$DATA/cache" 2>&1 9>&-); then last_run failed "building the report failed"; log "aggregate: $out"; exit 1; fi
+  # Unraid's php.ini keeps errors off the terminal, and its memory_limit is sized for web requests: a run with many
+  # images (each Trivy JSON is decoded in full) needs more. Errors go to stderr, which ends up in the log.
+  local arc=0
+  out=$("$PHP" -d memory_limit="$AGG_MEMORY" -d display_errors=stderr -d log_errors=0 \
+        "$PLUGIN_DIR/include/aggregate.php" "$WORK" "$DATA/report/report.json" \
+        "scope=${C[SCOPE]}" "registry=${C[REGISTRY_CHECK]}" "trivy=${TRIVY_IMAGE#*:}" "cache=$DATA/cache" 2>&1 9>&-) || arc=$?
+  if [ "$arc" -ne 0 ]; then
+    # keep what was scanned, so the report can be rebuilt by hand without scanning again (replaced by the next failure,
+    # removed by the next successful run)
+    keep_failed_work && WORK=
+    log "aggregate failed (exit $arc): $(tr '\n' ' ' <<<"${out:-no output}")"
+    log "scan results kept in $DATA/work-failed; to retry the report: $PHP -d memory_limit=$AGG_MEMORY -d display_errors=stderr $PLUGIN_DIR/include/aggregate.php $DATA/work-failed $DATA/report/report.json"
+    last_run failed "building the report failed (exit $arc), see the log"; exit 1
+  fi
+  drop_failed_work
+  log "report: $(tr '\n' ' ' <<<"$out")"
   new=$(sed -n 's/^new_fixable_critical=\([0-9]*\)$/\1/p' <<<"$out")
   local nf what="$n image(s)"; nf=$(grep -c $'\tlocal\tfailed\t' "$WORK/results.tsv")
   if [ "${C[OS_SCAN]}" = yes ]; then what="$n image(s) and the Unraid OS"; nf=$((nf + osfail)); fi
