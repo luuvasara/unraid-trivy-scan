@@ -420,7 +420,7 @@ F=$M/flash/unraid-cve-lens
   && ok "migration: data folder moved (not copied) with its databases and report" || bad "migration data move: $(find "$M/appdata" -maxdepth 1)"
 grep -q 'docker ps -aq --filter label=unraid-trivy-scan=1' "$M/docker.log" && grep -q 'docker rm -f abc123' "$M/docker.log" \
   && ok "migration: containers with the OLD label are removed" || bad "migration old-label cleanup: $(cat "$M/docker.log")"
-# idempotent: a second run changes nothing, and never overwrites what the user changed since
+# idempotent: a run on it changes nothing, and never overwrites what the user changed since
 echo 'SCHEDULE=""' >"$F/unraid-cve-lens.cfg"; before=$(cd "$M" && find flash appdata -type f -exec md5sum {} + | sort)
 mig all >"$M/run2.out" 2>&1; rc=$?; after=$(cd "$M" && find flash appdata -type f -exec md5sum {} + | sort)
 [ $rc = 0 ] && [ "$(cat "$F/unraid-cve-lens.cfg")" = 'SCHEDULE=""' ] && [ -d "$M/appdata/unraid-cve-lens" ] && [ ! -e "$M/appdata/unraid-trivy-scan" ] && [ "$before" = "$after" ] \
@@ -466,12 +466,11 @@ grep -q 'exit 1' <<<"$BRI" && grep -q 'ERROR' <<<"$BRI" && ok "bridge: aborts lo
 grep -Eq "nohup setsid bash -c 'sleep [0-9]+; plugin remove unraid-trivy-scan.plg'" <<<"$BRI" && ok "bridge: old entry is removed by a detached, delayed job" || bad "bridge does not schedule the delayed remove"
 ! grep -q '<URL>' "$BR" && ok "bridge: no downloaded FILE (no package of its own)" || bad "bridge downloads a file"
 ! grep -Eq 'trivy-scan (uninstall|stop)|rm -rf[^\n]*(appdata|cve-lens)|unraid-cve-lens' <<<"$BRR" && grep -q 'removepkg' <<<"$BRR" && ok "bridge: remove block touches only old-plugin pieces, never the migrated data" || bad "bridge remove block: $BRR"
-# the rename script is idempotent: in a copy of the tree (committed state plus new files), a second run changes nothing
+# the rename script is idempotent: in a copy of the tree (committed state plus new files), a run on it changes nothing
 RN=$W/rename-tree; rm -rf "$RN"; mkdir -p "$RN"
 (cd "$HERE" && git ls-files -z --cached --others --exclude-standard | grep -zv '^packages/' | xargs -0 cp --parents -t "$RN" 2>/dev/null)
-if (cd "$RN" && git init -q . && git add -A . && git -c user.name=t -c user.email=t@localhost commit -qm base && bash tools/rename-to-cve-lens.sh >/dev/null 2>&1 \
-    && git add -A . && git -c user.name=t -c user.email=t@localhost commit -qm again --allow-empty && bash tools/rename-to-cve-lens.sh >/dev/null 2>&1 && [ -z "$(git status --porcelain)" ]); then
-  ok "tools/rename-to-cve-lens.sh: re-running it on a renamed tree changes nothing"
+if (cd "$RN" && git init -q . && git add -A . && git -c user.name=t -c user.email=t@localhost commit -qm base && bash tools/rename-to-cve-lens.sh >/dev/null 2>&1 && [ -z "$(git status --porcelain)" ]); then
+  ok "tools/rename-to-cve-lens.sh: running it on the already renamed tree changes nothing"
 else bad "rename script is not idempotent: $(cd "$RN" && git status --short | head -5)"; fi
 # keep-old-end
 exit $fail
