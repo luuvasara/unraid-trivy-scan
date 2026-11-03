@@ -40,8 +40,8 @@ disk), plus about 1.5 GB for the Java database unless you turn that off, and, fo
 Grype image and its database (about 3.1 GB on disk). All of it goes to the data directory, `<Docker appdata>/unraid-trivy-scan`. Under
 **Settings, Trivy Scan, Databases** you choose for each database whether it is kept there between scans (then it is
 only refreshed when a newer build exists, about daily) or downloaded for every scan and deleted afterwards; the page
-shows each one's size (on disk now, at its last download, or an estimate). Defaults: the two Trivy databases are
-kept, the Grype database is downloaded for every scan. See [Databases](#databases).
+shows each one's size (on disk now, at its last download, or an estimate). Default: all three are kept (the Grype
+database is a download of about 200 MB that unpacks to about 3.1 GB). See [Databases](#databases).
 
 ## Features
 
@@ -116,7 +116,7 @@ the server are left alone.
 |---|---|---|---|
 | Trivy vulnerability DB | `<data dir>/cache/db` | `TRIVY_DB_KEEP` (default `yes`) | downloaded into the same place, deleted when the run ends |
 | Trivy Java DB | `<data dir>/cache/java-db` | `JAVA_DB_KEEP` (default `yes`) | same |
-| Grype DB (OS package match) | `<data dir>/grype` | `OS_PKG_DB_KEEP` (default `no`) | downloaded into `<data dir>/grype-run`, deleted when the run ends |
+| Grype DB (OS package match) | `<data dir>/grype` | `OS_PKG_DB_KEEP` (default `yes`) | downloaded into `<data dir>/grype-run`, deleted when the run ends |
 
 The two Trivy databases share Trivy's one cache mount, which is not split (Trivy may move files within it), so a
 Trivy database that is not kept is removed after the run rather than placed elsewhere. "Update database" refreshes
@@ -163,6 +163,13 @@ version, the same way on both bases:
    On RPM systems, a CVE id named in the package's changelog is taken as fixed (that is how Fedora documents
    backports). On either base, `/boot/config/plugins/unraid-trivy-scan/os-ignore.txt` hides CVEs: one per line,
    `CVE-2025-1234 [package] [# note]`. The report lists every hidden match and the reason.
+5. **Entries NVD cannot place.** Some NVD records name a product but no version range, so Grype reports them for
+   every version ("none (unknown)" in its output), and some carry NVD's `** DISPUTED **` marker. Neither says
+   anything about the installed version, so they are not counted as findings and are listed with that reason
+   instead. On the 7.3.4 release files this is 76 of 160 Grype matches (for example a 2008 OpenSSH entry, and
+   disputed glibc entries). A match is set aside only when every match for that CVE and package says so.
+6. **Notifications.** OS package matches never trigger the "new fixable critical" notification: the packages come
+   with Unraid and cannot be updated on their own, and a fix may already be backported. They are in the report.
 
 Local additions: `/boot/config/plugins/unraid-trivy-scan/cpe-map.txt`, same format as the shipped file; a line there
 replaces the shipped one for that name, and `<name> -` switches a mapping off.
@@ -215,7 +222,7 @@ value is checked when the form is saved (the save is refused if anything is inva
 | `NOTIFY` | `yes`, `no` | `yes` |
 | `OS_SCAN` | `yes`, `no` (also scan the Unraid OS, see above) | `yes` |
 | `OS_PKG_MATCH` | `yes`, `no` (with `OS_SCAN`: match the OS packages against NVD with Grype) | `yes` |
-| `OS_PKG_DB_KEEP` | `yes`, `no` (with `OS_PKG_MATCH`: keep Grype's database between scans; `no`: download it for every scan) | `no` |
+| `OS_PKG_DB_KEEP` | `yes`, `no` (with `OS_PKG_MATCH`: keep Grype's database between scans; `no`: download it for every scan) | `yes` |
 | `OS_KERNEL_MATCH` | `yes`, `no` (with `OS_PKG_MATCH`: include the kernel) | `no` |
 | `SHOW_TAB` | `yes`, `no` | `no` |
 | `DASH_TILE` | `yes`, `no` | `yes` |
