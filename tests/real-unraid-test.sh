@@ -89,7 +89,7 @@ while IFS= read -r l; do case $l in ok*) ok "${l#ok   }" ;; *) bad "${l#FAIL }" 
 
 # ---------------------------------------------------------------- F8: the tab's Cond through the real evalContent.php
 cond() {   # cond <fsState> <cfg text>: evaluate the header tab's Cond like PageBuilder::page_enabled(), with the cfg path redirected
-  local c; c=$(sed -n 's/^Cond="\(.*\)"$/\1/p' "$SRC/TrivyScanTab.page" | sed "s#/boot/config/plugins/unraid-trivy-scan/unraid-trivy-scan.cfg#$W/tab.cfg#")
+  local c; c=$(sed -n 's/^Cond="\(.*\)"$/\1/p' "$SRC/Vulnerabilities.page" | sed "s#/boot/config/plugins/unraid-trivy-scan/unraid-trivy-scan.cfg#$W/tab.cfg#")
   printf '%s' "$2" >"$W/tab.cfg"
   php -r 'function page_enabled($c, $var, $docroot) { $enabled = $evalSuccess = true; $evalContent = "\$enabled={$c};"; $evalFile = "tab"; include "$docroot/webGui/include/DefaultPageLayout/evalContent.php"; return ($enabled && $evalSuccess); }
           echo page_enabled($argv[1], ["fsState" => $argv[2]], $argv[3]) ? "show" : "hide";' "$c" "$1" "$R" 2>/dev/null | tr -d ' '   # evalContent.php itself prints trailing blanks after its closing tag
