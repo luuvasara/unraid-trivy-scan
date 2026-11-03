@@ -7,7 +7,7 @@
   <!ENTITY pluginURL "&gitURL;/&name;.plg">
   <!ENTITY pkg       "&name;-&version;-x86_64-1.txz">
   <!ENTITY pkgURL    "&gitURL;/packages/&pkg;">
-  <!ENTITY md5       "d6551ad01626010f5aae0ebddee86999">
+  <!ENTITY md5       "d930d6849b9358f2572ea3aa0e205c85">
 ]>
 <!-- Vulnerability scan of Docker container images, and of the Unraid OS, with a pinned Trivy release.
      Install: Plugins, Install Plugin, https://raw.githubusercontent.com/luuvasara/unraid-trivy-scan/main/unraid-trivy-scan.plg
