@@ -295,14 +295,18 @@ foreach ($osWarn as $w) $warnings[] = s($w, 300);
 $critNow = [];
 // NVD CPE matches of OS packages (source cpe) do not notify: the user cannot update those packages, and the fix may
 // already be backported into the same version; they are in the report
-foreach ($cves as $c) {
-  if ($c['severity'] !== 'CRITICAL' || $c['fix'] === 'none') continue;
-  foreach ($c['affected'] as $a) if (($a['source'] ?? '') !== 'cpe') { $critNow[$c['id']] = true; break; }
+/* One rule for this report and the previous one, so a CVE that was an OS-only CPE match before and now also affects
+ * an image does notify. Entries without "source" (reports before the OS package match) count as image findings. */
+function notifiable_critical($c): bool {
+  if (!is_array($c) || ($c['severity'] ?? '') !== 'CRITICAL' || ($c['fix'] ?? 'none') === 'none' || !is_string($c['id'] ?? null)) return false;
+  foreach ((is_array($c['affected'] ?? null) ? $c['affected'] : []) as $a) if (!is_array($a) || ($a['source'] ?? '') !== 'cpe') return true;
+  return false;
 }
+foreach ($cves as $c) if (notifiable_critical($c)) $critNow[$c['id']] = true;
 $prev = load_json($outFile);
 $critPrev = [];
 foreach ((is_array($prev['cves'] ?? null) ? $prev['cves'] : []) as $c) {
-  if (is_array($c) && ($c['severity'] ?? '') === 'CRITICAL' && ($c['fix'] ?? 'none') !== 'none' && is_string($c['id'] ?? null)) $critPrev[$c['id']] = true;
+  if (notifiable_critical($c)) $critPrev[$c['id']] = true;
 }
 $new = count(array_diff_key($critNow, $critPrev));
 
