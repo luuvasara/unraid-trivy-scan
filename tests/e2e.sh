@@ -111,8 +111,8 @@ AUTH=$(grep '^run ' "$W/docker.log" | grep -c 'config.json')
 [ "$AUTH" -ge 1 ] && [ "$(grep '^run ' "$W/docker.log" | grep 'config.json' | grep -c -e 'docker.sock' -e 'role=local' -e 'role=db')" = 0 ] \
   && ok "registry logins mounted only into registry containers ($AUTH), never with the socket" || bad "config.json placement"
 [ "$(grep '^run ' "$W/docker.log" | grep 'role=remote' | grep -c 'docker.sock')" = 0 ] && ok "registry containers have no Docker socket" || bad "remote with socket"
-# scan 2 adds the OS: notify exactly once, for the fixable criticals that scan 1 did not have (none repeated)
-NEWC=$(php -r '$f=fn($p)=>array_column(array_filter(json_decode(file_get_contents($p),true)["cves"], fn($c)=>$c["severity"]==="CRITICAL" && $c["fix"]!=="none"), "id");
+# scan 2 adds the OS: notify exactly once, for the fixable criticals (not the NVD/CPE matches of OS packages, which never notify) that scan 1 did not have (none repeated)
+NEWC=$(php -r '$f=fn($p)=>array_column(array_filter(json_decode(file_get_contents($p),true)["cves"], fn($c)=>$c["severity"]==="CRITICAL" && $c["fix"]!=="none" && count(array_filter($c["affected"], fn($a)=>($a["source"] ?? "")!=="cpe"))>0), "id");
   echo count(array_diff($f($argv[2]), $f($argv[1])));' "$W/report-1.json" "$UTS_DATA/report/report.json")
 if [ "$NEWC" -gt 0 ]; then
   [ "$(grep -c . "$W/notify.log")" = 1 ] && grep -q "Trivy scan: $NEWC new fixable critical" "$W/notify.log" \
@@ -137,6 +137,24 @@ grep -q '^usr/local/unraid-api/node_modules/' "$W/os-paths.txt" && grep -q '^usr
 NPK=$(find "$OSROOT/var/lib/pkgtools/packages" -maxdepth 1 -type f | wc -l)
 [ "$(report '$r["host"]["package_count"]')" = "$NPK" ] && [ "$(report '$r["host"]["kernel"]')" = "$UTS_OS_KERNEL" ] \
   && ok "OS inventory: $NPK Slackware packages, kernel $UTS_OS_KERNEL" || bad "OS inventory: $(report '$r["host"]["package_count"]." ".$r["host"]["kernel"]')"
+# the OS package match (Grype against NVD/CPE; defaults OS_PKG_MATCH=yes, OS_PKG_DB_KEEP=yes)
+PM=$(report '$r["host"]["pkg_match"]." ".$r["host"]["base"]." ".$r["host"]["mapped_count"]')
+read -r PMR PMB PMC <<<"$PM"
+[ "$PMR" = ok ] && [ "$PMB" = slackware ] && [ "${PMC:-0}" -gt 50 ] && ok "OS package match: pkg_match=ok, base=slackware, $PMC packages mapped to a CPE" || bad "OS package match: '$PM' ($(report '$r["host"]["pkg_error"]'))"
+CPEN=$(report 'count(array_filter($r["cves"], fn($c)=>count(array_filter($c["affected"], fn($a)=>$a["img"]==='"$OSI"' && ($a["source"] ?? "")==="cpe"))>0))')
+CPES=$(report 'implode(", ", array_map(fn($s)=>$s."=".count(array_filter($r["cves"], fn($c)=>$c["severity"]===$s && count(array_filter($c["affected"], fn($a)=>$a["img"]==='"$OSI"' && ($a["source"] ?? "")==="cpe"))>0)), ["CRITICAL","HIGH","MEDIUM","LOW","UNKNOWN"]))')
+[ "${CPEN:-0}" -gt 0 ] && ok "OS package match: $CPEN distinct CVE(s) from CPE matching on the OS target ($CPES)" || bad "no CPE findings on the OS target"
+PKL=$(grep '^run ' "$W/docker.log" | grep 'role=pkgmatch')
+[ "$(grep -c . <<<"$PKL")" = 1 ] && grep -q -- '--network none' <<<"$PKL" && ! grep -q -e 'docker.sock' -e 'config.json' <<<"$PKL" \
+  && ok "Grype match container: one, --network none, no Docker socket, no registry logins" || bad "Grype match container: $PKL"
+OVM=$(report 'implode(" ", array_map(fn($c)=>$c["id"], array_filter($r["cves"], fn($c)=>preg_match("/^CVE-(\\d{4})-/", $c["id"], $m) && $m[1] < 2024 && count(array_filter($c["affected"], fn($a)=>$a["img"]==='"$OSI"' && ($a["source"] ?? "")==="cpe" && stripos(($a["pkg"] ?? $a["package"] ?? ""), "ovmf")!==false))>0)))')
+# Before the version was normalised, stable202602 was unparseable and matched 29 old CVEs. The old tianocore:edk2
+# entries that still match are NVD records without a version range ("none (unknown)"): those are listed as not
+# counted (host.suppressed), so no pre-2024 ovmf CVE may be a finding.
+NOVM=$(wc -w <<<"$OVM")
+NSUP=$(report 'count(array_filter($r["host"]["suppressed"], fn($x)=>$x[1]==="ovmf" && strpos($x[2], "no version range")!==false))')
+[ "$NOVM" = 0 ] && [ "$NSUP" -gt 0 ] && ok "ovmf: no pre-2024 CPE finding; $NSUP range-less NVD entries listed as not counted" || bad "ovmf: $NOVM old finding(s): $OVM; suppressed $NSUP"
+[ "$(grep '^run ' "$W/docker.log" | grep -c -- '-grypedb ')" = 1 ] && ok "Grype DB downloaded once in scan 2 (kept for the later scans)" || bad "Grype DB downloads in scan 2: $(grep '^run ' "$W/docker.log" | grep -c -- '-grypedb ')"
 grep -q 'and the Unraid OS scanned, 0 failed' "$UTS_DATA/report/last-run" && ok "last-run: $(sed -n 's/^message=//p' "$UTS_DATA/report/last-run")" || bad "last-run: $(cat "$UTS_DATA/report/last-run")"
 cfg 'SCOPE="all"' 'REGISTRY_CHECK="yes"' 'REGISTRY_AUTH="no"' 'JAVA_DB="no"' 'OS_SCAN="no"'; : >"$W/docker.log"; unset UTS_REG_AUTH
 cp "$UTS_DATA/report/report.json" "$W/report-registry.json"   # kept for the README screenshots
@@ -185,9 +203,14 @@ printf 'FROM alpine:3.10\n' | "$D" build -q -t uts-e2e-local:1 - >/dev/null && A
 "$D" run -d "${L[@]}" --name uts-e2e-local uts-e2e-local:1 sleep 3600 >/dev/null
 cfg 'SCOPE="running"' 'REGISTRY_CHECK="yes"' 'JAVA_DB="no"' 'NOTIFY="no"' 'OS_SCAN="no"'; : >"$W/docker.log"
 bash "$S" run || bad "scan 6 rc=$?"
+BRD=$("$D" image inspect -f '{{json .RepoDigests}}' uts-e2e-local:1)
+if [ "$BRD" != "[]" ] && [ "$BRD" != null ]; then
+  echo "skip locally built image: RepoDigests=$BRD (containerd image store: built images get a digest; Unraid uses overlay2)"
+else
 LOC=$(report 'implode("|", array_map(fn($i)=>$i["update"].":".$i["update_note"], array_filter($r["images"], fn($i)=>$i["name"]==="uts-e2e-local:1")))')
 [ "$LOC" = "skipped:image was built locally (no registry digest)" ] && ! grep '^run ' "$W/docker.log" | grep 'role=remote' | grep -q 'uts-e2e-local' \
   && ok "locally built image: registry check skipped with the reason, no registry container for it" || bad "local image: '$LOC'"
+fi
 grep -q 'nginx:1.19-alpine=current' <<<"$(report 'implode(",", array_map(fn($i)=>$i["name"]."=".$i["update"], $r["images"]))')" \
   && ok "pulled images are still registry-checked next to it" || bad "registry check of pulled images: $(report 'json_encode(array_column($r["images"], "update", "name"))')"
 "$D" rm -f uts-e2e-local >/dev/null

@@ -72,7 +72,7 @@ grep -q 'HTTP 200' <<<"$OUT" && grep -q 'Scheduled scan: 30 3 \* \* 0' <<<"$OUT"
 grep -qx 'SCHEDULE="30 3 \* \* 0"' "$UTS_CFG" && grep -qx 'SCOPE="all"' "$UTS_CFG" && grep -qx 'TIMEOUT="45"' "$UTS_CFG" && ! grep -q 'csrf_token\|#' "$UTS_CFG" \
   && ok "Apply (valid): cfg written by the real update.php as KEY=\"value\" lines, no csrf_token, no #fields" || bad "cfg: $(cat "$UTS_CFG" 2>&1)"
 [ "$(grep -v '^#' "$UTS_CRON_FILE" 2>/dev/null | cut -d' ' -f1-5)" = "30 3 * * 0" ] && [ -s "$W/update_cron.log" ] && ok "Apply (valid): cron entry written, update_cron called" || bad "cron: $(cat "$UTS_CRON_FILE" 2>&1)"
-ls "$W/flash" | grep -qE 'cfg[0-9]+$' && bad "stray atomic-write file left in flash" || ok "no stray temp file next to the cfg"
+compgen -G "$W/flash/*cfg[0-9]*" >/dev/null && bad "stray atomic-write file left in flash" || ok "no stray temp file next to the cfg"
 
 # ---------------------------------------------------------------- Settings Apply, refused values (F6)
 CFG_BEFORE=$(md5sum <"$UTS_CFG"); CRON_BEFORE=$(md5sum <"$UTS_CRON_FILE")

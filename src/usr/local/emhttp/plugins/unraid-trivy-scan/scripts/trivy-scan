@@ -80,7 +80,7 @@ DATA=${UTS_DATA:-$(appdata_root)/$NAME}
 
 # ---------------------------------------------------------------- settings (data, never executed)
 declare -A DEF=([SCHEDULE]="" [SCOPE]=running [TIMEOUT]=30 [JAVA_DB]=yes [REGISTRY_CHECK]=no [REGISTRY_AUTH]=no
-                [NOTIFY]=yes [OS_SCAN]=yes [OS_PKG_MATCH]=yes [OS_PKG_DB_KEEP]=no [OS_KERNEL_MATCH]=no [TRIVY_DB_KEEP]=yes [JAVA_DB_KEEP]=yes [SHOW_TAB]=no [DASH_TILE]=yes [REMOVE_DATA]=no)
+                [NOTIFY]=yes [OS_SCAN]=yes [OS_PKG_MATCH]=yes [OS_PKG_DB_KEEP]=yes [OS_KERNEL_MATCH]=no [TRIVY_DB_KEEP]=yes [JAVA_DB_KEEP]=yes [SHOW_TAB]=no [DASH_TILE]=yes [REMOVE_DATA]=no)
 declare -A C
 CFG_PROBLEMS=()
 
@@ -194,7 +194,7 @@ fail_reason() {   # one line from the error output
   local l
   l=$(sed -e 's/\x1b\[[0-9;]*[A-Za-z]//g' "$ERR_FILE" 2>/dev/null | grep -v '^[[:space:]]*$' | grep -E 'FATAL|ERROR|error' | tail -1)
   [ -n "$l" ] || l=$(grep -v '^[[:space:]]*$' "$ERR_FILE" 2>/dev/null | tail -1)
-  [ -n "$l" ] || l="trivy exited with code $RC"
+  [ -n "$l" ] || l="scanner exited with code $RC"
   clean "$l" 300
 }
 
@@ -271,7 +271,7 @@ pkg_match_on() { [ "${C[OS_SCAN]}" = yes ] && [ "${C[OS_PKG_MATCH]}" = yes ]; }
 #   OS_PKG_DB_KEEP=no   grype-run  downloaded at the start of every run and deleted at its end (on_exit)
 GRYPE_KEPT=grype GRYPE_RUN=grype-run
 GRYPE_DB=$GRYPE_RUN
-grype_db_ok() { compgen -G "$DATA/$GRYPE_DB/[0-9]*/vulnerability.db" >/dev/null; }
+grype_db_ok() { [ -n "$GRYPE_DB" ] && [ ! -L "$DATA/$GRYPE_DB" ] && compgen -G "$DATA/$GRYPE_DB/[0-9]*/vulnerability.db" >/dev/null; }
 GRYPE_ENV=(-e GRYPE_DB_CACHE_DIR=/db -e GRYPE_CHECK_FOR_APP_UPDATE=false -e GRYPE_DB_AUTO_UPDATE=false)
 
 update_grype_db() {   # failure is a warning only: the rest of the scan does not depend on it
@@ -281,7 +281,7 @@ update_grype_db() {   # failure is a warning only: the rest of the scan does not
     GRYPE_DB=$GRYPE_RUN
     if [ -d "$DATA/$GRYPE_KEPT" ]; then log "OS package database is no longer kept (setting): removing $DATA/$GRYPE_KEPT"; rm_data_dir "$GRYPE_KEPT"; fi
   fi
-  if [ -L "$DATA/$GRYPE_DB" ]; then warn "$DATA/$GRYPE_DB is a symlink, not used (OS package match skipped)"; return 1; fi
+  if [ -L "$DATA/$GRYPE_DB" ]; then warn "$DATA/$GRYPE_DB is a symlink, not used (OS package match skipped)"; GRYPE_DB=; return 1; fi
   mkdir -p "$DATA/$GRYPE_DB/tmp" || { warn "cannot create $DATA/$GRYPE_DB"; return 1; }
   local owner; owner=$(stat -c %u:%g "$DATA/$GRYPE_DB")
   if ! ensure_image "$GRYPE_IMAGE" "Grype image"; then warn "could not pull the Grype image (OS package match)"; return 1; fi
@@ -423,9 +423,14 @@ os_pkg_match() {   # os_pkg_match <version> <kernel>; sets PKG_RES, PKG_WHY, PKG
   local ver=$1 kernel=$2 d rpmdb='' cfgdir out
   cfgdir=$(dirname "$CFG")
   progress pkgmatch "$done" "$total" "OS packages"
-  if ! grype_db_ok; then PKG_RES=failed; PKG_WHY="no OS package database (Grype DB download failed)"; return 1; fi
-  if [ ! -s "$WORK/os/packages.txt" ]; then          # not Slackware: look for an RPM database
+  # which base, known before anything can fail, so the report never names the wrong one
+  if [ -s "$WORK/os/packages.txt" ]; then PKG_BASE=slackware
+  else                                               # not Slackware: look for an RPM database
     for d in "${RPM_DB_DIRS[@]}"; do [ -d "$OS_ROOT/$d" ] && { rpmdb=$d; break; }; done
+    [ -n "$rpmdb" ] && PKG_BASE=rpm
+  fi
+  if ! grype_db_ok; then PKG_RES=failed; PKG_WHY="no OS package database (Grype DB download failed)"; return 1; fi
+  if [ ! -s "$WORK/os/packages.txt" ]; then
     if [ -z "$rpmdb" ]; then PKG_RES=failed; PKG_WHY="no package database found (neither Slackware pkgtools nor RPM)"; return 1; fi
     if ! command -v "$RPM" >/dev/null 2>&1; then PKG_RES=failed; PKG_WHY="RPM database found but rpm is not installed"; return 1; fi
     "$RPM" --root "${OS_ROOT:-/}" -qa --qf '%{NAME}\t%{EPOCHNUM}\t%{VERSION}\t%{RELEASE}\t%{ARCH}\t%{SOURCERPM}\n' 2>/dev/null \
@@ -448,7 +453,9 @@ os_pkg_match() {   # os_pkg_match <version> <kernel>; sets PKG_RES, PKG_WHY, PKG
   fi
   OUT_FILE=$WORK/os/pkgmatch.json; ERR_FILE=$WORK/os/pkgmatch.err
   # validate-age off: like Trivy with --skip-db-update, scan with the DB there is; the report shows its date
-  if grype_container pkgmatch "$NAME-$RUN_ID-pkgmatch" --network none --read-only --tmpfs /tmp -e TMPDIR=/tmp -e HOME=/tmp \
+  # as the owner of the DB directory: Grype creates it mode 700, and with --cap-drop ALL even root cannot read it otherwise
+  local owner; owner=$(stat -c %u:%g "$DATA/$GRYPE_DB")
+  if grype_container pkgmatch "$NAME-$RUN_ID-pkgmatch" --user "$owner" --network none --read-only --tmpfs /tmp -e TMPDIR=/tmp -e HOME=/tmp \
        "${GRYPE_ENV[@]}" -e GRYPE_DB_VALIDATE_AGE=false \
        -v "$DATA/$GRYPE_DB:/db:ro" -v "$WORK/os/os.cdx.json:/in/os.cdx.json:ro" -- \
        sbom:/in/os.cdx.json -o json --by-cve -q \
@@ -599,7 +606,8 @@ do_run() {
     # removed by the next successful run)
     keep_failed_work && WORK=
     log "aggregate failed (exit $arc): $(tr '\n' ' ' <<<"${out:-no output}")"
-    log "scan results kept in $DATA/work-failed; to retry the report: $PHP -d memory_limit=$AGG_MEMORY -d display_errors=stderr $PLUGIN_DIR/include/aggregate.php $DATA/work-failed $DATA/report/report.json"
+    # the same options as above, so the rebuilt report has the same scope, registry state, Trivy version and cache info
+    log "scan results kept in $DATA/work-failed; to retry the report: $PHP -d memory_limit=$AGG_MEMORY -d display_errors=stderr $PLUGIN_DIR/include/aggregate.php $DATA/work-failed $DATA/report/report.json scope=${C[SCOPE]} registry=${C[REGISTRY_CHECK]} trivy=${TRIVY_IMAGE#*:} cache=$DATA/cache"
     last_run failed "building the report failed (exit $arc), see the log"; exit 1
   fi
   drop_failed_work

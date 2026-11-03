@@ -95,7 +95,15 @@ function grype_vulns(array $j, int &$bad): array {
       ? implode(', ', array_filter(array_map(fn($x) => s($x, 60), array_slice($fix['versions'], 0, 5)), 'strlen')) : '';
     $url = url_ok($v['dataSource'] ?? '');
     if ($url === '') foreach ((is_array($v['urls'] ?? null) ? array_slice($v['urls'], 0, 5) : []) as $u) if (($url = url_ok($u)) !== '') break;
-    $cpe = '';
+    $cpe = ''; $none = false; $bounded = false;
+    foreach ((is_array($m['matchDetails'] ?? null) ? $m['matchDetails'] : []) as $d) {
+      // Grype writes "none (unknown)" when the NVD entry has no version range, i.e. lists EVERY version as affected
+      // (grype/db/v6 vulnerability_provider.go); such a match says nothing about the installed version. Only that
+      // positive marker counts as "no range": a missing or unexpected constraint keeps the finding.
+      $vc = is_array($d) ? s($d['found']['versionConstraint'] ?? '', 200) : '';
+      if (strncmp($vc, 'none', 4) === 0) $none = true; else $bounded = true;
+    }
+    $unbounded = $none && !$bounded;
     foreach ((is_array($m['matchDetails'] ?? null) ? $m['matchDetails'] : []) as $d) {
       $c = $d['searchedBy']['cpes'][0] ?? ($d['found']['cpes'][0] ?? null);
       if (is_string($c) && preg_match('/^cpe:2\.3:[aho]:([^:]{1,80}):([^:]{1,80}):/', $c, $cm)) { $cpe = s("$cm[1]:$cm[2]", 170); break; }
@@ -103,7 +111,8 @@ function grype_vulns(array $j, int &$bad): array {
     $desc = s($v['description'] ?? '', 1000);
     $title = preg_match('/^(.{20,200}?[.!?])(\s|$)/u', $desc, $tm) ? $tm[1] : s($desc, 200);
     $out[] = [$id, $sev, s($a['name'] ?? '', 200), s($a['version'] ?? '', 100), $fixed, $state,
-              'OS package (NVD CPE match)', $title, $url, $cpe !== '' ? "cpe $cpe" : ''];
+              'OS package (NVD CPE match)', $title, $url, $cpe !== '' ? "cpe $cpe" : '',
+              $unbounded, preg_match('/^\s*\*\* DISPUTED \*\*/', $desc) === 1];   // NVD's own marker, at the start
   }
   return $out;
 }
@@ -172,7 +181,7 @@ if (is_file("$work/os/result")) {
   $ver = s($kv['version'] ?? '', 40);
   if (!preg_match('/^[0-9A-Za-z.+_-]{1,40}$/', $ver)) $ver = 'unknown';
   $pkgRes = in_array($kv['pkg_result'] ?? '', ['ok', 'failed'], true) ? $kv['pkg_result'] : 'off';
-  $base = in_array($kv['pkg_base'] ?? '', ['slackware', 'rpm'], true) ? $kv['pkg_base'] : 'slackware';
+  $base = in_array($kv['pkg_base'] ?? '', ['slackware', 'rpm'], true) ? $kv['pkg_base'] : (is_file("$work/os/packages.txt") && filesize("$work/os/packages.txt") > 0 ? 'slackware' : 'unknown');
   $pk = []; $mapped = 0;
   if (is_file("$work/os/inventory.tsv")) {
     // written by include/osinventory.php: name, version, build, CPE vendor:product list, base
@@ -198,7 +207,7 @@ if (is_file("$work/os/result")) {
   if ($pkgRes === 'failed') $osWarn[] = 'OS package CVE match failed: ' . $host['pkg_error'];
   $osN = count($images);
   $ok = ($kv['result'] ?? '') === 'ok';
-  $baseName = $base === 'rpm' ? 'RPM-based (Fedora)' : 'Slackware-based';
+  $baseName = $base === 'rpm' ? 'RPM-based (Fedora)' : ($base === 'slackware' ? 'Slackware-based' : 'Package base not recognised');
   $images[] = ['kind' => 'os', 'id' => '', 'name' => $host['name'], 'ref' => '', 'stale' => false, 'containers' => [],
                'digests' => [], 'scan' => $ok ? 'ok' : 'failed', 'error' => $ok ? '' : (s($kv['error'] ?? '', 300) ?: 'no result'),
                'os' => $baseName . ($pkgRes === 'ok' ? " ($mapped OS packages matched against NVD)" : ' (OS packages not CVE-matched)'),
@@ -253,13 +262,20 @@ if ($osN !== null && $host['pkg_match'] === 'ok') {
     $st = $gj['descriptor']['db']['status']['built'] ?? ($gj['descriptor']['db']['built'] ?? '');
     $host['grype_db'] = s($st, 40);
     $sup = os_suppressions("$work/os");
-    $seen = [];
+    // one entry per CVE, package and version; it counts as "no range" or "disputed" only if EVERY match for it is
+    $groups = [];
     foreach (grype_vulns($gj, $bad) as $v) {
-      [$id, , $pkg, $inst, , , , , , $path] = $v;
-      $key = "$id|$pkg|$inst";
-      if (isset($seen[$key])) continue;
-      $seen[$key] = true;
+      $key = "$v[0]|$v[2]|$v[3]";
+      if (!isset($groups[$key])) { $groups[$key] = $v; continue; }
+      $groups[$key][10] = $groups[$key][10] && $v[10];
+      $groups[$key][11] = $groups[$key][11] && $v[11];
+    }
+    foreach ($groups as $v) {
+      [$id, , $pkg] = $v;
       $why = $sup[$id][$pkg] ?? ($sup[$id]['*'] ?? null);
+      if ($why === null && $v[10]) $why = 'NVD gives no version range (lists every version as affected)';
+      if ($why === null && $v[11]) $why = 'disputed (NVD)';
+      $v = array_slice($v, 0, 10);
       if ($why !== null) { if (count($host['suppressed']) < 2000) $host['suppressed'][] = [$id, $pkg, $why]; continue; }
       add_finding($cves, $osN, $v, '', 'cpe');
       $images[$osN]['vulns']++;
@@ -293,11 +309,20 @@ foreach ($osWarn as $w) $warnings[] = s($w, 300);
 
 // new fixable critical CVEs compared with the previous report
 $critNow = [];
-foreach ($cves as $c) if ($c['severity'] === 'CRITICAL' && $c['fix'] !== 'none') $critNow[$c['id']] = true;
+// NVD CPE matches of OS packages (source cpe) do not notify: the user cannot update those packages, and the fix may
+// already be backported into the same version; they are in the report
+/* One rule for this report and the previous one, so a CVE that was an OS-only CPE match before and now also affects
+ * an image does notify. Entries without "source" (reports before the OS package match) count as image findings. */
+function notifiable_critical($c): bool {
+  if (!is_array($c) || ($c['severity'] ?? '') !== 'CRITICAL' || ($c['fix'] ?? 'none') === 'none' || !is_string($c['id'] ?? null)) return false;
+  foreach ((is_array($c['affected'] ?? null) ? $c['affected'] : []) as $a) if (!is_array($a) || ($a['source'] ?? '') !== 'cpe') return true;
+  return false;
+}
+foreach ($cves as $c) if (notifiable_critical($c)) $critNow[$c['id']] = true;
 $prev = load_json($outFile);
 $critPrev = [];
 foreach ((is_array($prev['cves'] ?? null) ? $prev['cves'] : []) as $c) {
-  if (is_array($c) && ($c['severity'] ?? '') === 'CRITICAL' && ($c['fix'] ?? 'none') !== 'none' && is_string($c['id'] ?? null)) $critPrev[$c['id']] = true;
+  if (notifiable_critical($c)) $critPrev[$c['id']] = true;
 }
 $new = count(array_diff_key($critNow, $critPrev));
 
