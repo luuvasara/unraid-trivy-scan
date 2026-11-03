@@ -8,6 +8,15 @@
  * Every string from Trivy output is treated as untrusted: types are checked, lengths capped, control characters
  * removed, links kept only when they are plain https URLs. The pages escape on output. */
 if (PHP_SAPI !== 'cli') { http_response_code(404); exit; }
+/* A fatal error (memory_limit, ...) ends PHP with exit 255 and, with Unraid's php.ini, prints nothing: say what happened
+ * on stderr, which scripts/trivy-scan writes to its log. */
+register_shutdown_function(function () {
+  $e = error_get_last();
+  if ($e && in_array($e['type'], [E_ERROR, E_PARSE, E_CORE_ERROR, E_COMPILE_ERROR, E_USER_ERROR], true)) {
+    fwrite(STDERR, sprintf("PHP fatal error: %s (%s:%d); peak memory %d MB of memory_limit %s\n", $e['message'],
+      basename($e['file']), $e['line'], (int)(memory_get_peak_usage(true) / 1048576), ini_get('memory_limit')));
+  }
+});
 
 const SEV_RANK = ['UNKNOWN' => 0, 'LOW' => 1, 'MEDIUM' => 2, 'HIGH' => 3, 'CRITICAL' => 4];
 
@@ -157,7 +166,7 @@ foreach ($targets as $idx => $n) {
     unset($c);
     $im['vulns']++;
   }
-  unset($im);
+  unset($im, $j, $rj, $remote, $seen);   // a decoded Trivy result can be hundreds of MB: free it before the next one
 }
 
 $summary = ['total' => 0, 'fixable' => 0, 'images' => 0, 'failed' => 0, 'invalid_entries' => $bad,
@@ -204,4 +213,4 @@ if ($json === false) { fwrite(STDERR, "json_encode failed\n"); exit(1); }
 @mkdir(dirname($outFile), 0755, true);
 $tmp = "$outFile.tmp." . getmypid();
 if (file_put_contents($tmp, $json) === false || !rename($tmp, $outFile)) { @unlink($tmp); fwrite(STDERR, "cannot write $outFile\n"); exit(1); }
-echo "cves={$summary['total']}\nnew_fixable_critical=$new\n";
+echo "cves={$summary['total']}\nnew_fixable_critical=$new\npeak_memory_mb=" . (int)(memory_get_peak_usage(true) / 1048576) . "\n";

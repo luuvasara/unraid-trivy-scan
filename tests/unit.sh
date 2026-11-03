@@ -15,6 +15,7 @@ cat >"$W/bin/docker" <<EOF
 #!/bin/sh
 echo "docker \$*" >>"$W/docker.log"
 case "\$1" in ps) exit 0 ;; info) exit 0 ;; esac
+case " \$* " in *" rootfs "*) [ -n "\${FAKE_OS_JSON:-}" ] && [ -z "\${FAKE_OS_FAIL:-}" ] && { cat "\$FAKE_OS_JSON"; exit 0; } ;; esac   # a large Trivy result
 case " \$* " in *" rootfs "*) [ -n "\${FAKE_OS_FAIL:-}" ] && { echo "FATAL fake failure" >&2; exit 1; }; echo '{"SchemaVersion":2,"Results":[]}' ;; esac
 exit 0
 EOF
@@ -215,6 +216,21 @@ FDOCK=$W/bin2; mkdir -p "$FDOCK"; printf '#!/bin/sh\nexit 1\n' >"$FDOCK/docker";
 PATH="$FDOCK:$PATH" UTS_DATA=$MISSING/unraid-trivy-scan UTS_RUN=$W/run-miss UTS_LOG=$W/miss.log UTS_CFG=$W/none.cfg bash "$S" run
 [ ! -e "$W/not-mounted" ] && ok "Docker down AND appdata missing: still nothing created (array-stopped cron run)" || bad "created $W/not-mounted"
 grep -q 'uts_path(.data.))' "$P/TrivyScanSettings.page" && ! grep -q '<code>/mnt/user/appdata' "$P/TrivyScanSettings.page" && ok "settings page shows the real data directory" || bad "settings page hard-codes the data path"
+
+# ---------------------------------------------------------------- the report step runs out of memory
+# On a 51-image server PHP hit Unraid's default memory_limit and, with Unraid's php.ini, printed nothing: the log said
+# only "aggregate: ". Here a 16 MB Trivy result against a 16M limit.
+OSD=$W/osdata/unraid-trivy-scan
+printf 'version="7.3.4"\n' >"$OR/etc/unraid-version"
+php -r '$v=[]; for($i=0;$i<40000;$i++) $v[]=["VulnerabilityID"=>"CVE-2024-".(10000+$i),"PkgName"=>"p$i","InstalledVersion"=>"1","Severity"=>"HIGH","Title"=>str_repeat("x",300)];
+        file_put_contents($argv[1], json_encode(["SchemaVersion"=>2,"Results"=>[["Target"=>"t","Vulnerabilities"=>$v]]]));' "$W/big.json"
+FAKE_OS_JSON=$W/big.json UTS_AGG_MEMORY=16M osrun 'OS_SCAN="yes"' 'JAVA_DB="no"'
+[ "$(sed -n 's/^result=//p' "$OSD/report/last-run")" = failed ] && grep -q 'aggregate failed (exit 255):.*PHP fatal error: Allowed memory size' "$W/os.log" \
+  && [ -f "$OSD/work-failed/os/result" ] && grep -q "to retry the report: .*aggregate.php $OSD/work-failed" "$W/os.log" \
+  && ok "report step out of memory: reason logged, scan results kept in work-failed with a retry command" || bad "aggregate failure: $(tail -3 "$W/os.log")"
+FAKE_OS_JSON=$W/big.json osrun 'OS_SCAN="yes"' 'JAVA_DB="no"'
+[ ! -e "$OSD/work-failed" ] && grep -q 'report: cves=40000 .*peak_memory_mb=' "$W/os.log" && [ "$(sed -n 's/^result=//p' "$OSD/report/last-run")" = ok ] \
+  && ok "same results with the default limit: report built, peak memory logged, work-failed removed" || bad "after failure: $(tail -3 "$W/os.log")"
 
 # Header tabs (Menu="Tasks:n"): Unraid labels them with the page's Name, else the upper-cased file name
 # (read on a 7.3.4 server: dynamix/include/DefaultPageLayout/Navigation/Main.php:23 `_(_var($button, 'Name', $pageName))`).
