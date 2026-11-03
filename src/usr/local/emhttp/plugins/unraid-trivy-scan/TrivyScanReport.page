@@ -1,4 +1,4 @@
-Menu="TrivyScan:1 TrivyScanTab:1"
+Menu="TrivyScan:1 Vulnerabilities:1"
 Title="Report"
 Tag="list"
 Markdown="false"

@@ -218,12 +218,17 @@ grep -q 'uts_path(.data.))' "$P/TrivyScanSettings.page" && ! grep -q '<code>/mnt
 
 # Header tabs (Menu="Tasks:n"): Unraid labels them with the page's Name, else the upper-cased file name
 # (read on a 7.3.4 server: dynamix/include/DefaultPageLayout/Navigation/Main.php:23 `_(_var($button, 'Name', $pageName))`).
-# 2026.11.01c shipped TrivyScanTab.page without Name and showed "TRIVYSCANTAB".
+# 2026.11.01c shipped TrivyScanTab.page without Name and showed "TRIVYSCANTAB". The browser title (DefaultPageLayout.php:
+# <title>NAME/$myPage['name']</title>) and the URL still use the file name, so up to 2026.11.02 the selected tab read
+# "Tower/TrivyScanTab"; the file is now named after the label.
 for f in "$P"/*.page; do
   if grep -Eq '^Menu="Tasks(:[0-9]+)?"' "$f"; then
     grep -Eq '^Name="[A-Za-z][A-Za-z ]+"$' "$f" && ok "Tasks page $(basename "$f") has a Name (header tab label)" || bad "Tasks page $(basename "$f") has no Name: the tab would show the file name"
+    nm=$(sed -n 's/^Name="\(.*\)"$/\1/p' "$f")
+    [ "$(basename "$f" .page)" = "${nm// /}" ] && ok "Tasks page file name matches its Name ($nm): browser title and URL read the same" || bad "Tasks page $(basename "$f") is not named after its Name '$nm'"
   fi
 done
+[ ! -e "$P/TrivyScanTab.page" ] && ! grep -rq 'TrivyScanTab' "$P" && ok "no reference to the old TrivyScanTab page name left" || bad "TrivyScanTab still referenced"
 
 # ---------------------------------------------------------------- .plg lifecycle
 PLG=$HERE/unraid-trivy-scan.plg

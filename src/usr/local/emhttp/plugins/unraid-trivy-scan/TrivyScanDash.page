@@ -10,7 +10,7 @@ require_once "$uts_root/include/lib.php";
 $uts_cfg = uts_config();
 $uts_rep = uts_report();
 $uts_st  = uts_status();
-$uts_link = $uts_cfg['SHOW_TAB'] === 'yes' ? '/TrivyScanTab' : '/Settings/TrivyScan';
+$uts_link = $uts_cfg['SHOW_TAB'] === 'yes' ? '/Vulnerabilities' : '/Settings/TrivyScan';
 if ($uts_st['running']) {
   $uts_sub = $uts_st['total'] > 0 ? sprintf('Scanning: %d of %d', $uts_st['done'], $uts_st['total']) : 'Scan running';
 } elseif ($uts_rep) {
