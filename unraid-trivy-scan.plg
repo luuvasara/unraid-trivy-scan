@@ -2,12 +2,12 @@
 <!DOCTYPE PLUGIN [
   <!ENTITY name      "unraid-trivy-scan">
   <!ENTITY author    "unraid-trivy-scan project">
-  <!ENTITY version   "2026.11.02">
+  <!ENTITY version   "2026.11.03">
   <!ENTITY gitURL    "https://raw.githubusercontent.com/luuvasara/unraid-trivy-scan/main">
   <!ENTITY pluginURL "&gitURL;/&name;.plg">
   <!ENTITY pkg       "&name;-&version;-x86_64-1.txz">
   <!ENTITY pkgURL    "&gitURL;/packages/&pkg;">
-  <!ENTITY md5       "f8fa02999ff391f69c9b29948fbabc6d">
+  <!ENTITY md5       "d6551ad01626010f5aae0ebddee86999">
 ]>
 <!-- Vulnerability scan of Docker container images, and of the Unraid OS, with a pinned Trivy release.
      Install: Plugins, Install Plugin, https://raw.githubusercontent.com/luuvasara/unraid-trivy-scan/main/unraid-trivy-scan.plg
@@ -20,6 +20,14 @@
         launch="Settings/TrivyScan" pluginURL="&pluginURL;" support="https://github.com/luuvasara/unraid-trivy-scan/issues">
 
 <CHANGES>
+###2026.11.03
+- New (Xaero): the Unraid OS's own packages are now checked for CVEs. Trivy has no advisory data for Slackware (or for the Fedora base of Unraid 8), so the package list is mapped to NVD product names and matched by upstream version with a pinned Grype image, in a container without network, without the Docker socket and with nothing of the host but that list. Settings, Unraid OS: "Match OS packages against NVD" (on) and "Include the kernel" (off). NVD only knows upstream versions, so a fix Lime Tech backported can still show up: check findings against the release notes; os-ignore.txt next to the settings file hides a CVE.
+- NVD entries that give no version range (they list every version as affected) and disputed entries are listed as "not counted" with the reason instead of as findings. On the 7.3.4 release files that leaves 73 CVEs of 160 raw matches. OS package matches never trigger the "new fixable critical" notification.
+- New (Xaero): Settings, Databases: for each database (Trivy, Java, Grype) choose whether it is kept on disk between scans or downloaded for every scan and deleted afterwards, with its size. All are kept by default; the Grype database is about a 200 MB download and 3.1 GB on disk.
+- New (Xaero): the report has a Target filter: all, the Unraid OS, container images, or one image. The CVE count next to an OS package shows exactly that package's CVEs.
+- Fix (Xaero): with many images the report step could run out of memory and fail with an empty log line. It now has room for large runs, logs the real error, and keeps the scan results with a command to rebuild the report without scanning again.
+- Fix (Xaero): images built locally (compose, docker build) are no longer sent to the registry check, which could only fail with "authentication required".
+- Fix (Xaero): the header tab's page is now named Vulnerabilities, so the browser title and address match the tab label. A bookmark to /TrivyScanTab needs updating.
 ###2026.11.02
 - Fix: the "scan stopped" and "no vulnerability database" status lines showed a stray "?" where a semicolon was.
 - New: a running scan is now stopped when you stop the array (Unraid's "stopping Docker" event), so it no longer holds the shares open or leaves scan containers behind.
