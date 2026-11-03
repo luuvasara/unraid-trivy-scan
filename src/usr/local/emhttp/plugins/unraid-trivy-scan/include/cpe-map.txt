@@ -18,8 +18,8 @@ aaa_glibc-solibs      gnu:glibc
 bash                  gnu:bash
 coreutils             gnu:coreutils
 util-linux            kernel:util-linux
-shadow                shadow-utils_project:shadow-utils
-shadow-utils          shadow-utils_project:shadow-utils
+shadow                shadow-maint:shadow-utils
+shadow-utils          shadow-maint:shadow-utils
 pam                   linux-pam:linux-pam
 sudo                  sudo_project:sudo todd_miller:sudo
 grep                  gnu:grep
@@ -48,7 +48,7 @@ nano                  gnu:nano
 vim                   vim:vim
 screen                gnu:screen
 tmux                  tmux_project:tmux
-ncurses               gnu:ncurses
+ncurses               invisible-island:ncurses ncurses_project:ncurses
 readline              gnu:readline
 procps-ng             procps-ng_project:procps-ng
 inetutils             gnu:inetutils
@@ -137,7 +137,7 @@ ntp                   ntp:ntp
 chrony                tuxfamily:chrony
 iptables              netfilter:iptables
 nftables              netfilter:nftables
-iputils               iputils_project:iputils
+iputils               iputils:iputils
 net-tools             net-tools_project:net-tools
 libpcap               tcpdump:libpcap
 tcpdump               tcpdump:tcpdump
@@ -225,3 +225,52 @@ mesa                  mesa3d:mesa
 libvncserver          libvncserver_project:libvncserver
 mozilla-firefox       mozilla:firefox
 firefox               mozilla:firefox
+
+# ---- added after checking each pair against NVD (CVE configurations, 2026-11-03)
+apcupsd               apcupsd:apcupsd
+gd                    libgd:libgd
+gettext               gnu:gettext
+gettext-tools         gnu:gettext
+htop                  htop:htop
+hwloc                 open-mpi:hwloc
+iperf3                es:iperf3
+iproute2              iproute2_project:iproute2
+jansson               jansson_project:jansson
+kbd                   kbd-project:kbd
+libidn                gnu:libidn
+libmaxminddb          maxmind:libmaxminddb
+libtpms               libtpms_project:libtpms
+libunwind             libunwind_project:libunwind
+libzip                libzip:libzip
+logrotate             logrotate_project:logrotate
+lvm2                  redhat:lvm2
+mc                    midnight-commander:midnight_commander
+miniupnpc             miniupnp_project:miniupnpc
+swtpm                 swtpm_project:swtpm
+tpm2-tools            tpm2-tools_project:tpm2-tools
+tpm2-tss              tpm2_software_stack_project:tpm2_software_stack
+traceroute            traceroute_project:traceroute
+virglrenderer         virglrenderer_project:virglrenderer freedesktop:virglrenderer
+xterm                 invisible-island:xterm
+xfsprogs              sgi:xfsprogs
+yajl                  yajl_project:yajl
+linuxptp              linuxptp_project:linuxptp
+sysstat               sysstat_project:sysstat
+infozip               info-zip:unzip
+dbus-glib             freedesktop:dbus-glib
+libxkbcommon          xkbcommon:libxkbcommon
+fribidi               gnu:fribidi
+flex                  westes:flex
+imlib2                enlightenment:imlib2
+exfatprogs            namjaejeon:exfatprogs
+telnet                netkit_telnet_project:netkit_telnet
+libXi                 x.org:libxi
+libXrender            x.org:libxrender
+libXtst               x.org:libxtst
+libXdmcp              x.org:libxdmcp
+libXfixes             x.org:libxfixes
+libXrandr             x.org:libxrandr
+libXfont2             x.org:libxfont x:libxfont
+libxcb                x:libxcb
+libXt                 x:libxt
+libXext               x:libxext
