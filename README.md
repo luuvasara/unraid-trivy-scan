@@ -4,7 +4,8 @@ An Unraid plugin that scans the images of your Docker containers, and the Unraid
 vulnerabilities with [Trivy](https://github.com/aquasecurity/trivy), and shows the result as one row per CVE: which
 images (or OS files) and packages are affected, whether a package update or a newer image fixes it, and which
 targets could not be scanned and why. For the OS, read [what the OS scan covers](#what-the-os-scan-covers) first:
-Trivy cannot check Unraid's own Slackware packages.
+Trivy cannot check Unraid's own Slackware packages, so they are matched against NVD's CPE data with Grype instead,
+which works the same way on the coming Fedora-based Unraid 8.
 
 | Report (light theme) | Report, one CVE expanded (dark theme) |
 |---|---|
@@ -35,11 +36,12 @@ Requires Unraid 7.0 or later. Nothing is scanned or downloaded at install time o
 **Settings, Trivy Scan** and press **Scan now**, or set a schedule.
 
 The first scan downloads the pinned Trivy image (about 60 MB) and the vulnerability database (about 1.6 GB on
-disk), plus about 1.5 GB for the Java database unless you turn that off, into the data directory,
-`<Docker appdata>/unraid-trivy-scan`. Under **Settings, Trivy Scan, Databases** you choose for each database whether it
-is kept there between scans (the default; then it is only refreshed when a newer build exists, about daily) or
-downloaded for every scan and deleted afterwards; the page shows each one's size (on disk now, at its last download,
-or an estimate). See [Databases](#databases).
+disk), plus about 1.5 GB for the Java database unless you turn that off, and, for the OS package match, the pinned
+Grype image and its database (about 3.1 GB on disk). All of it goes to the data directory, `<Docker appdata>/unraid-trivy-scan`. Under
+**Settings, Trivy Scan, Databases** you choose for each database whether it is kept there between scans (then it is
+only refreshed when a newer build exists, about daily) or downloaded for every scan and deleted afterwards; the page
+shows each one's size (on disk now, at its last download, or an estimate). Defaults: the two Trivy databases are
+kept, the Grype database is downloaded for every scan. See [Databases](#databases).
 
 ## Features
 
@@ -53,8 +55,11 @@ or an estimate). See [Databases](#databases).
   a newer image no longer has ("Fixed in a newer image").
 - Optional scan of the Unraid OS itself (on by default): the Go programs, Node.js packages (including the Unraid
   API) and other language packages inside the OS appear as one more target, "Unraid OS 7.x.y", with the file path
-  of each affected package. The OS's Slackware packages and the kernel are listed separately, because Trivy cannot
-  match them; see [what the OS scan covers](#what-the-os-scan-covers).
+  of each affected package.
+- OS package match (on with the OS scan): the OS's own packages (Slackware packages on Unraid 7, RPMs on a Fedora
+  base) are mapped to NVD product names (CPEs) and matched by upstream version with a pinned Grype image, because
+  Trivy has no advisory feed for either base; optionally the kernel too. See
+  [what the OS scan covers](#what-the-os-scan-covers).
 - Per-target timeout. An image or OS scan that fails (timeout, unsupported content, missing Java database, ...) is
   listed with the reason instead of silently missing from the report.
 - Report: one row per CVE, expandable to the affected images, containers, packages, installed and fixed versions;
@@ -76,6 +81,11 @@ or an estimate). See [Databases](#databases).
 | Local image scan | **none** (`--network none`) | yes, needed to read local images | read-only | **never** |
 | Registry check (optional) | yes | **no** | read-only | only with "Use registry logins" |
 | Unraid OS scan (optional, on by default) | **none** (`--network none`) | **no** | read-only | **never** |
+| OS package match, Grype (with the OS scan, on by default) | **none** (`--network none`, `--read-only`) | **no** | read-only | **never** |
+
+Grype's database is downloaded by a second "database download" container (network, no socket). The match container
+gets nothing of the host's filesystem: only that database, read-only, and the SBOM file the script builds from the
+package list. Where it is kept: see [Databases](#databases).
 
 The OS scan runs `trivy rootfs /rootfs`. It gets only `/usr`, `/lib`, `/lib64`, `/bin`, `/sbin` and `/opt` (when it
 exists and is not a symlink), each mounted read-only under `/rootfs` with `bind-recursive=disabled`, so anything
@@ -106,10 +116,12 @@ the server are left alone.
 |---|---|---|---|
 | Trivy vulnerability DB | `<data dir>/cache/db` | `TRIVY_DB_KEEP` (default `yes`) | downloaded into the same place, deleted when the run ends |
 | Trivy Java DB | `<data dir>/cache/java-db` | `JAVA_DB_KEEP` (default `yes`) | same |
+| Grype DB (OS package match) | `<data dir>/grype` | `OS_PKG_DB_KEEP` (default `no`) | downloaded into `<data dir>/grype-run`, deleted when the run ends |
 
-Both share Trivy's one cache mount, which is not split (Trivy may move files within it), so a database that is not
-kept is removed after the run rather than placed elsewhere. "Update database" refreshes only the databases that are
-kept. The size of each database after its last download is noted in `<data dir>/db-sizes` for the settings page.
+The two Trivy databases share Trivy's one cache mount, which is not split (Trivy may move files within it), so a
+Trivy database that is not kept is removed after the run rather than placed elsewhere. "Update database" refreshes
+only the databases that are kept. The size of each database after its last download is noted in
+`<data dir>/db-sizes` for the settings page.
 
 ## What the OS scan covers
 
@@ -125,14 +137,40 @@ apk, dpkg, rpm and Bottlerocket only. In a test run that included Unraid's `/etc
 | Node.js packages (`package.json` in `node_modules`), e.g. the Unraid API in `/usr/local/unraid-api` and the bundled npm | **yes** |
 | Other installed language packages Trivy reads in rootfs mode: Python wheels/eggs, PHP Composer `installed.json`, Ruby gemspecs, Java jars, .NET, Rust (`Cargo.lock`, cargo-auditable binaries), Julia | **yes**, where present (Unraid 7.3.4 has none of these that Trivy reports) |
 | Files installed by plugins under `/usr` or `/opt` (Go binaries, `node_modules`, ...) | **yes**, same rules |
-| The Slackware packages (`bash`, `openssl`, `openssh`, `samba`, `nginx`, `php`, `qemu`, `glibc`, ... about 370 in 7.3.4) | **no** |
-| The Linux kernel | **no** |
-| C/C++ programs and libraries outside a package manager Trivy knows | **no** |
+| The Slackware packages (`bash`, `openssl`, `openssh`, `samba`, `nginx`, `php`, `qemu`, `glibc`, ... about 370 in 7.3.4) | **by Trivy, no**; **by the OS package match, yes** for those with a CPE mapping (see below) |
+| The Linux kernel | only with "Include the kernel" (off by default) |
+| C/C++ programs and libraries outside any package manager | **no** |
 
-The report therefore shows the Slackware package list (name, version, build) and the kernel version in a
-collapsible section, "OS packages, not CVE-matched", with a link to the Unraid release notes: compare those
-versions with the notes, and keep Unraid updated. A clean OS scan does **not** mean the OS has no known
-vulnerabilities.
+### The OS package match (Slackware now, Fedora later)
+
+Trivy needs a distribution advisory feed to check OS packages, and there is none it can use for Slackware or for
+Fedora / Fedora CoreOS (see below). Both bases ship mostly unmodified upstream versions, though, and NVD records the
+affected upstream version ranges of each CVE as CPE configurations. So the plugin matches by upstream name and
+version, the same way on both bases:
+
+1. **Inventory, on the host.** Slackware: the file names in `/var/lib/pkgtools/packages`. RPM (Unraid 8): `rpm -qa`
+   with each package's source RPM name, plus the changelogs. Which one is used is decided by what exists, not by a
+   version check, so nothing has to change when Unraid 8 ships.
+2. **Mapping** (`include/osinventory.php`). Package names (Slackware names or RPM source names; RPM sub-packages such
+   as `openssl-libs` fold into their source package) are mapped to NVD `vendor:product` pairs from
+   `include/cpe-map.txt`, about 200 entries. The result is a CycloneDX SBOM with one CPE 2.3 per package and version.
+   Packages without a mapping are not guessed: a wrong vendor/product pair gives false findings. They are listed in
+   the report, unchecked. Go programs and Node.js packages are left to the Trivy scan, which reads their exact
+   module versions.
+3. **Matching.** The pinned `anchore/grype` image (version and index digest in `GRYPE_IMAGE`, `scripts/trivy-scan`)
+   matches the SBOM against its NVD data, offline.
+4. **Backports.** NVD only knows upstream versions, so a fix backported into the same version is still reported.
+   On RPM systems, a CVE id named in the package's changelog is taken as fixed (that is how Fedora documents
+   backports). On either base, `/boot/config/plugins/unraid-trivy-scan/os-ignore.txt` hides CVEs: one per line,
+   `CVE-2025-1234 [package] [# note]`. The report lists every hidden match and the reason.
+
+Local additions: `/boot/config/plugins/unraid-trivy-scan/cpe-map.txt`, same format as the shipped file; a line there
+replaces the shipped one for that name, and `<name> -` switches a mapping off.
+
+Limits, plainly: the match is only as good as NVD's CPE data (NVD's analysis backlog since 2024 means some recent
+CVEs have no CPE configuration yet and are not found), the mapping covers the packages most likely to matter rather
+than all ~370, and Slackware/Lime Tech backports are not visible to it. Treat a finding as "check the release notes",
+not as proof. The report still links the Unraid release notes from the OS package list.
 
 ### Unraid 8 will not close this gap by itself
 
@@ -148,10 +186,11 @@ list. Trivy still cannot check them against CVEs, though:
   is labelled `help wanted`. The blocker discussed there is that Fedora publishes no structured,
   machine-readable advisory feed like RHEL's.
 
-Two things change for this plugin on Unraid 8. The OS package inventory will have to read the RPM database instead of
-Slackware's package list. The mounted directories will have to be checked again for an image-based layout. Both are
-planned once a beta is available to test against. The Go and Node.js coverage above does not depend on the base
-distribution.
+This is why the OS package match above does not rely on a Fedora feed: on an RPM base it reads the RPM database
+(`/usr/lib/sysimage/rpm`, `/var/lib/rpm` or `/usr/share/rpm` under the root) through `rpm`, and the same CPE matching
+applies. The RPM path is tested with recorded `rpm -qa` output only; the mounted directories of the Trivy scan will
+have to be checked again for an image-based layout once a beta is available. The Go and Node.js coverage does not
+depend on the base distribution.
 
 What a scan of the official 7.3.4 release found (test machine, 2026-10-31, vulnerability DB of that day) is in
 [Status](#status).
@@ -175,9 +214,12 @@ value is checked when the form is saved (the save is refused if anything is inva
 | `REGISTRY_AUTH` | `yes`, `no` (mount `/root/.docker/config.json` read-only into the registry-check container) | `no` |
 | `NOTIFY` | `yes`, `no` | `yes` |
 | `OS_SCAN` | `yes`, `no` (also scan the Unraid OS, see above) | `yes` |
+| `OS_PKG_MATCH` | `yes`, `no` (with `OS_SCAN`: match the OS packages against NVD with Grype) | `yes` |
+| `OS_PKG_DB_KEEP` | `yes`, `no` (with `OS_PKG_MATCH`: keep Grype's database between scans; `no`: download it for every scan) | `no` |
+| `OS_KERNEL_MATCH` | `yes`, `no` (with `OS_PKG_MATCH`: include the kernel) | `no` |
 | `SHOW_TAB` | `yes`, `no` | `no` |
 | `DASH_TILE` | `yes`, `no` | `yes` |
-| `REMOVE_DATA` | `yes`, `no` (on removal, delete the data directory and the pinned Trivy image) | `no` |
+| `REMOVE_DATA` | `yes`, `no` (on removal, delete the data directory and the pinned Trivy and Grype images) | `no` |
 
 An invalid schedule never reaches cron; with no valid schedule there is no cron entry.
 
@@ -187,7 +229,7 @@ An invalid schedule never reaches cron; with no valid schedule there is no cron 
   No scan, no download.
 - Upgrade: a running scan is stopped before its script is replaced.
 - Removal: a running scan is stopped and the cron entry removed. With "When the plugin is removed" set to delete,
-  the data directory (fixed path, only if it is a real directory and not a symlink) and the pinned Trivy image are
+  the data directory (fixed path, only if it is a real directory and not a symlink) and the pinned Trivy and Grype images are
   removed too. The settings file on the flash drive is kept.
 
 ## Command line
@@ -245,6 +287,12 @@ npm (`/usr/local/lib/node_modules/npm`) 39, `containerd` 36, `ctr` 28, `containe
 bundled npm. A finding means the installed version is in an affected range, not that it can be exploited on your
 server: several of the rclone CVEs, by their own titles, need rclone's remote-control server to be enabled. Fixing
 them is up to Lime Tech (a newer Unraid release), not something to patch by hand.
+
+The OS package match is covered by the offline tests (`tests/osinventory-test.php`: Slackware list, RPM query with
+changelogs, user map; `tests/aggregate-test.php`: hand-written Grype output; `tests/unit.sh`: container role and
+mounts through a fake `docker` and a fake `rpm`) and has run on one real Unraid 7 server (Grype database download,
+411 Slackware packages of which 124 mapped, matched without error). It has not yet been run against the 7.3.4
+release files in `tests/e2e.sh`, so the number of findings it gives there is not recorded here.
 
 ## Thanks
 

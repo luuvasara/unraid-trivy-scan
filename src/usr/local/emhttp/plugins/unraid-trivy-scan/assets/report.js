@@ -109,7 +109,8 @@
   var $prog = document.getElementById('uts-progress');
   var $scan = document.getElementById('uts-scan');
   var $stop = document.getElementById('uts-stop');
-  var PHASE = { pull: 'Downloading the Trivy image', db: 'Updating databases', scan: 'Scanning', os: 'Scanning the Unraid OS',
+  var PHASE = { pull: 'Downloading a scanner image', db: 'Updating databases', scan: 'Scanning', os: 'Scanning the Unraid OS',
+                pkgmatch: 'Matching OS packages against NVD',
                 registry: 'Registry check', report: 'Writing the report' };
   var pollTimer = null, lastGenerated = null;
 
@@ -196,6 +197,7 @@
     parts.push('registry check ' + (r.registry ? 'on' : 'off'));
     var sm = r.summary || {};
     parts.push('Unraid OS scan ' + (str(sm.os) === 'ok' || str(sm.os) === 'failed' ? 'on' : 'off'));
+    if (r.host && str(r.host.pkg_match) === 'ok') parts.push('OS packages via NVD' + (str(r.grype) ? ' (Grype ' + str(r.grype).split('@')[0] + ')' : ''));
     return el('p', { className: 'uts-meta' }, parts.join(' · '));
   }
 
@@ -244,7 +246,9 @@
         el('tbody', null, rows))));
   }
 
-  /* The Unraid OS package list: Trivy has no Slackware advisory feed, so it is shown, not matched. */
+  /* The Unraid OS package list. Trivy has no advisory feed for Slackware (Unraid 7) or Fedora (Unraid 8); with the
+   * OS package match on, the packages that map to an NVD product (CPE) are matched by Grype and their CVEs are in
+   * the table like any other finding. Packages without a mapping are listed here, unchecked. */
   function hostPackages(r) {
     var h = r.host;
     if (!h || typeof h !== 'object') return null;
@@ -252,17 +256,102 @@
     var ver = str(h.version);
     var notes = /^[0-9]+\.[0-9]+\.[0-9]+$/.test(ver) ? 'https://docs.unraid.net/unraid-os/release-notes/' + ver + '/' : '';
     var open = /(?:^|[#&])packages(?:&|$)/.test(location.hash);
+    var matched = str(h.pkg_match) === 'ok';
+    var baseName = str(h.base) === 'rpm' ? 'RPM' : 'Slackware';
+    var notesLink = notes ? [' (', el('a', { href: notes, target: '_blank', rel: 'noopener noreferrer' }, 'Unraid ' + ver), ')'] : null;
+    var note;
+    if (matched) {
+      note = el('p', { className: 'uts-hint uts-host-note' },
+        'Trivy has no advisory feed for this OS base. The ' + num(h.mapped_count) + ' packages with an NVD product below were matched by upstream version against NVD’s CPE data (Grype' +
+        (str(h.grype_db) ? ', database built ' + str(h.grype_db).slice(0, 10) : '') + '); their CVEs are in the CVE table under "' + str(h.name) + '" (Target filter, or the count in the CVEs column). ',
+        el('strong', null, 'NVD knows upstream versions only:'), ' a fix backported without a version change still shows up, so check a finding against the release notes',
+        notesLink, ' before acting on it. Packages that are not mapped are not checked; the kernel is checked only with "Include the kernel"' + (h.kernel_match ? ' (on)' : ' (off)') + '.');
+    } else {
+      note = el('p', { className: 'uts-hint uts-host-note' },
+        'Trivy has no advisory feed for this OS base, so these packages and the kernel are ', el('strong', null, 'not'), ' checked for CVEs',
+        str(h.pkg_match) === 'failed' ? ' (the OS package match failed: ' + (str(h.pkg_error) || 'unknown error') + ')' : ' (setting "Match OS packages against NVD" is off)',
+        '. Check them against the Unraid release notes', notesLink,
+        '. The OS scan above covers what Trivy can match inside the OS: Go binaries, Node.js packages (including the Unraid API) and other language packages.');
+    }
+    var sup = Array.isArray(h.suppressed) ? h.suppressed.filter(Array.isArray) : [];
     return el('details', { className: 'uts-images uts-host', open: open },
-      el('summary', null, str(h.name) + ': OS packages, not CVE-matched (' + num(h.package_count) + ')'),
-      el('p', { className: 'uts-hint uts-host-note' },
-        'Unraid OS is based on Slackware, and Trivy has no Slackware advisory feed, so these packages and the kernel are ',
-        el('strong', null, 'not'), ' checked for CVEs. Check them against the Unraid release notes',
-        notes ? [' (', el('a', { href: notes, target: '_blank', rel: 'noopener noreferrer' }, 'Unraid ' + ver), ')'] : null,
-        '. The OS scan above covers what Trivy can match inside the OS: Go binaries, Node.js packages (including the Unraid API) and other language packages.'),
-      el('p', { className: 'uts-meta' }, 'Kernel ', el('span', { className: 'uts-mono' }, str(h.kernel) || '-'), ' · ' + pk.length + ' Slackware packages'),
-      el('ul', { className: 'uts-pkglist' }, pk.map(function (p) {
-        return el('li', null, el('span', { className: 'uts-mono' }, str(p[0])), ' ', el('span', { className: 'uts-mono uts-hint' }, str(p[1]) + (str(p[2]) ? '-' + str(p[2]) : '')));
-      })));
+      el('summary', null, str(h.name) + ': OS packages' + (matched ? ', ' + num(h.mapped_count) + ' of ' + num(h.package_count) + ' CVE-matched via NVD' : ', not CVE-matched (' + num(h.package_count) + ')')),
+      note,
+      el('p', { className: 'uts-meta' }, 'Kernel ', el('span', { className: 'uts-mono' }, str(h.kernel) || '-'), ' · ' + pk.length + ' ' + baseName + ' packages'),
+      pkgTable(r, pk, matched),
+      sup.length ? el('details', { className: 'uts-host-hidden' },
+        el('summary', null, num(h.suppressed_count) + ' NVD match(es) hidden as fixed or ignored'),
+        el('div', { className: 'uts-pkgscroll' }, el('table', { className: 'uts-table uts-table-plain' },
+          el('thead', null, el('tr', null, ['CVE', 'Package', 'Why hidden'].map(function (t) { return el('th', { scope: 'col' }, t); }))),
+          el('tbody', null, sup.map(function (x) {
+            var u = cveUrl({ id: str(x[0]) });
+            return el('tr', null, el('td', { className: 'uts-mono' }, u ? el('a', { href: u, target: '_blank', rel: 'noopener noreferrer' }, str(x[0])) : str(x[0])),
+              el('td', { className: 'uts-mono' }, str(x[1])), el('td', null, str(x[2])));
+          }))))) : null);
+  }
+
+  /* The OS packages as a table: name, installed version, the NVD product it is matched as, and its CVEs in this report
+   * (a link that narrows the CVE table to that package on the Unraid OS). Filter: all / matched / not matched, search. */
+  var pkgView = { show: 'all', q: '' };
+  function pkgTable(r, pk, matched) {
+    var images = Array.isArray(r.images) ? r.images : [];
+    var osN = -1;
+    images.forEach(function (im, n) { if (isOs(im)) osN = n; });
+    var cveCount = {};   // package name -> distinct OS CVEs from the NVD match
+    (Array.isArray(r.cves) ? r.cves : []).forEach(function (c) {
+      var seen = {};
+      (Array.isArray(c.affected) ? c.affected : []).forEach(function (a) {
+        if (a && num(a.img) === osN && str(a.source) === 'cpe' && !seen[str(a.pkg)]) { seen[str(a.pkg)] = 1; cveCount[str(a.pkg)] = (cveCount[str(a.pkg)] || 0) + 1; }
+      });
+    });
+    var nMatched = pk.filter(function (p) { return str(p[3]) !== ''; }).length;
+    if (!matched) pkgView.show = 'all';
+    var body = el('tbody'), info = el('span', { className: 'uts-hint' });
+    function render() {
+      var q = pkgView.q.trim().toLowerCase();
+      var rows = pk.filter(function (p) {
+        var cpe = str(p[3]);
+        if (pkgView.show === 'matched' && !cpe) return false;
+        if (pkgView.show === 'unmatched' && cpe) return false;
+        return !q || (str(p[0]) + ' ' + cpe).toLowerCase().indexOf(q) >= 0;
+      });
+      body.replaceChildren.apply(body, rows.length ? rows.map(function (p) {
+        var name = str(p[0]), cpe = str(p[3]), n = cveCount[name] || 0;
+        return el('tr', null,
+          el('td', { className: 'uts-mono' }, name),
+          el('td', { className: 'uts-mono' }, str(p[1]) + (str(p[2]) ? '-' + str(p[2]) : '')),
+          el('td', { className: 'uts-mono' + (cpe ? '' : ' uts-hint') }, cpe ? cpe.split(',').join(', ') : (matched ? 'not mapped' : '-')),
+          el('td', { className: 'uts-num' }, n ? el('a', { href: '#', title: 'Show the CVEs of ' + name + ' in the table below', onclick: function (e) {
+            e.preventDefault(); showOsPackage(name, osN);
+          } }, String(n)) : (cpe && matched ? '0' : '')));
+      }) : [el('tr', null, el('td', { colspan: 4, className: 'uts-empty' }, 'No package matches.'))]);
+      info.textContent = rows.length === pk.length ? pk.length + ' packages' : rows.length + ' of ' + pk.length + ' packages';
+    }
+    render();
+    var show = matched ? el('label', { className: 'uts-field', 'for': 'uts-pkgshow' }, el('span', null, 'Show'),
+      el('select', { id: 'uts-pkgshow', onchange: function (e) { pkgView.show = e.target.value; render(); } },
+        [['all', 'All packages (' + pk.length + ')'], ['matched', 'Matched against NVD (' + nMatched + ')'], ['unmatched', 'Not matched (' + (pk.length - nMatched) + ')']]
+          .map(function (o) { return el('option', { value: o[0], selected: pkgView.show === o[0] }, o[1]); }))) : null;
+    var search = el('label', { className: 'uts-field', 'for': 'uts-pkgq' }, el('span', null, 'Search'),
+      el('input', { type: 'search', id: 'uts-pkgq', placeholder: 'package or NVD product', value: pkgView.q,
+        oninput: function (e) { pkgView.q = e.target.value; render(); } }));
+    return [el('div', { className: 'uts-filters uts-pkgfilters', role: 'group', 'aria-label': 'OS package filters' }, show, search, info),
+      el('div', { className: 'uts-pkgscroll' }, el('table', { className: 'uts-table uts-table-plain uts-pkgtable' },
+        el('thead', null, el('tr', null, ['Package', 'Installed', matched ? 'Matched as (NVD vendor:product)' : 'NVD product', 'CVEs'].map(function (t, i) {
+          return el('th', { scope: 'col', className: i === 3 ? 'uts-num' : null }, t);
+        }))), body))];
+  }
+  /* Narrow the CVE table to one OS package: all fix states, that package's name, and the Unraid OS target if the
+   * report has the target filter (otherwise the search alone). */
+  function showOsPackage(name, osN) {
+    var f = state.f;
+    f.q = name; f.fix = 'all'; f.page = 1;
+    if ('target' in f) f.target = osN >= 0 ? 't' + osN : 'all';
+    var qi = document.getElementById('uts-q'); if (qi) qi.value = name;
+    var fs = document.getElementById('uts-fix'); if (fs) fs.value = 'all';
+    var ts = document.getElementById('uts-target'); if (ts && 'target' in f) ts.value = f.target;
+    renderTable();
+    if ($table && $table.scrollIntoView) $table.scrollIntoView({ behavior: 'smooth', block: 'start' });
   }
 
   /* ---- filtering / sorting ---- */
@@ -396,7 +485,7 @@
           el('tbody', null, aff.map(function (a) {
             var im = images[a.img] || {};
             var where = str(a.path) || str(a.target);
-            if (isOs(im) && where && where.charAt(0) !== '/') where = '/' + where;   // rootfs paths are relative to /
+            if (isOs(im) && str(a.source) !== 'cpe' && where && where.charAt(0) !== '/') where = '/' + where;   // rootfs paths are relative to /
             return el('tr', null,
               el('td', null, targetName(im)),
               el('td', null, (Array.isArray(im.containers) ? im.containers.map(str) : []).join(', ')),
@@ -445,7 +534,7 @@
       $body.replaceChildren(el('div', { className: 'uts-empty-state' },
         el('h3', null, 'No report yet'),
         el('p', null, 'Press "Scan now", or set a schedule on the Settings tab.'),
-        el('p', null, 'The first scan downloads the pinned Trivy image (about 60 MB), the vulnerability database (about 1.6 GB on disk) and, if enabled, the Java database (about 1.5 GB).'),
+        el('p', null, 'The first scan downloads the pinned Trivy image (about 60 MB), the vulnerability database (about 1.6 GB on disk) and, if enabled, the Java database (about 1.5 GB). With the OS package match on, it also downloads the pinned Grype image and its database (about 200 MB to download, about 3.1 GB on disk once unpacked).'),
         el('p', null, 'On the Settings tab, under "Databases", you choose for each database whether it is kept on disk between scans (then it is only refreshed when a newer one is published, about once a day) or downloaded for every scan and deleted afterwards (no disk space used between scans, but the full download each time).')));
       return;
     }

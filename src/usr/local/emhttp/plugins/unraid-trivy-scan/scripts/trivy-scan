@@ -21,6 +21,9 @@
 #           (OS_DIRS), each bind-mounted read-only and NON-recursively under /rootfs, so nothing mounted below them
 #           (array, pools, /lib/firmware, libvirt image, ...) is visible. /mnt, /boot, /proc, /sys, /etc and
 #           /var/lib/docker are never mounted.
+#   pkgmatch --network none, NO Docker socket, Grype DB read-only: matches the OS package list (Slackware packages on
+#           Unraid 7, RPMs on Unraid 8) against NVD's CPE data. It gets only the SBOM built on the host from that list
+#           (include/osinventory.php), no part of the filesystem. Grype's DB is downloaded by a "db" role container.
 # The socket is NOT a sandbox boundary: whoever holds it can ask Docker for anything. --network none, the
 # read-only DB mount, --cap-drop ALL and no-new-privileges only narrow what a compromised scanner can do directly.
 set -uo pipefail
@@ -31,6 +34,9 @@ NAME=unraid-trivy-scan
 # registries (HEAD /v2/aquasec/trivy/manifests/<ver> on registry-1.docker.io and /v2/aquasecurity/trivy/manifests/<ver>
 # on ghcr.io, header Docker-Content-Digest; they must match), edit this line, bump the plugin version.
 TRIVY_IMAGE="aquasec/trivy:0.76.1@sha256:790fd66d1697395d8693d1acaa1ea702406a20f109b6fc7bac8db623eca6c06c"
+# The OS package matcher (Grype, for NVD CPE matching, which Trivy does not do). Pinned the same way: multi-arch index
+# digest of the tag, identical on registry-1.docker.io (anchore/grype) and ghcr.io (anchore/grype); checked 2026-11-02.
+GRYPE_IMAGE="anchore/grype:v0.121.0@sha256:621d56d1d68106b787022c81546f7e0a36202a25d1239f0c20195fab8c16f7ea"
 
 # UTS_* overrides exist for the offline tests only. Anyone who can set the environment of this root script is
 # root already, so they are not a privilege boundary.
@@ -48,6 +54,7 @@ PHP=${UTS_PHP:-php}
 AGG_MEMORY=${UTS_AGG_MEMORY:-2048M}   # PHP memory_limit for building the report (tests: a small value)
 OS_ROOT=${UTS_OS_ROOT:-}              # tests: a local copy of an Unraid root filesystem instead of /
 OS_KERNEL=${UTS_OS_KERNEL:-}          # tests: kernel version of that copy (default: uname -r)
+RPM=${UTS_RPM:-rpm}                   # tests: a fake rpm
 PS_FILTER=${UTS_PS_FILTER:-}          # tests: restrict the container list (docker ps --filter value)
 TRIVY_TIMEOUT_OVERRIDE=${UTS_TRIVY_TIMEOUT:-}   # tests: Trivy --timeout value (e.g. 1ms) to simulate a timeout
 LABEL=$NAME
@@ -73,7 +80,7 @@ DATA=${UTS_DATA:-$(appdata_root)/$NAME}
 
 # ---------------------------------------------------------------- settings (data, never executed)
 declare -A DEF=([SCHEDULE]="" [SCOPE]=running [TIMEOUT]=30 [JAVA_DB]=yes [REGISTRY_CHECK]=no [REGISTRY_AUTH]=no
-                [NOTIFY]=yes [OS_SCAN]=yes [TRIVY_DB_KEEP]=yes [JAVA_DB_KEEP]=yes [SHOW_TAB]=no [DASH_TILE]=yes [REMOVE_DATA]=no)
+                [NOTIFY]=yes [OS_SCAN]=yes [OS_PKG_MATCH]=yes [OS_PKG_DB_KEEP]=no [OS_KERNEL_MATCH]=no [TRIVY_DB_KEEP]=yes [JAVA_DB_KEEP]=yes [SHOW_TAB]=no [DASH_TILE]=yes [REMOVE_DATA]=no)
 declare -A C
 CFG_PROBLEMS=()
 
@@ -107,7 +114,7 @@ valid_value() {   # valid_value <key> <value>
     SCHEDULE) [ -z "$2" ] || cron_valid "$2" ;;
     SCOPE)    [ "$2" = running ] || [ "$2" = all ] ;;
     TIMEOUT)  [[ $2 =~ ^[0-9]{1,3}$ ]] && [ $((10#$2)) -ge 5 ] && [ $((10#$2)) -le 240 ] ;;
-    JAVA_DB|REGISTRY_CHECK|REGISTRY_AUTH|NOTIFY|OS_SCAN|TRIVY_DB_KEEP|JAVA_DB_KEEP|SHOW_TAB|DASH_TILE|REMOVE_DATA) [ "$2" = yes ] || [ "$2" = no ] ;;
+    JAVA_DB|REGISTRY_CHECK|REGISTRY_AUTH|NOTIFY|OS_SCAN|OS_PKG_MATCH|OS_PKG_DB_KEEP|OS_KERNEL_MATCH|TRIVY_DB_KEEP|JAVA_DB_KEEP|SHOW_TAB|DASH_TILE|REMOVE_DATA) [ "$2" = yes ] || [ "$2" = no ] ;;
     *) return 1 ;;
   esac
 }
@@ -162,15 +169,17 @@ kill_containers() { local ids; ids=$(our_containers "${1:-}"); [ -n "$ids" ] && 
 # docker run with this plugin's labels and hardening; output to $OUT_FILE/$ERR_FILE, killed after $HARD_LIMIT s.
 CHILD=
 RC=0
-trivy_container() {   # trivy_container <role> <name> <docker run options...> -- <trivy args...>
-  local role=$1 name=$2; shift 2
+trivy_container() { run_container "$TRIVY_IMAGE" "$@"; }   # trivy_container <role> <name> <docker run options...> -- <trivy args...>
+grype_container() { run_container "$GRYPE_IMAGE" "$@"; }   # same, with the pinned Grype image
+run_container() {   # run_container <image> <role> <name> <docker run options...> -- <args...>
+  local image=$1 role=$2 name=$3; shift 3
   local opts=()
   while [ $# -gt 0 ] && [ "$1" != -- ]; do opts+=("$1"); shift; done
   shift
   timeout -k 30 "$HARD_LIMIT" docker run --rm --name "$name" \
     --label "$LABEL=1" --label "$LABEL.run=$RUN_ID" --label "$LABEL.role=$role" \
     --cap-drop ALL --security-opt no-new-privileges "${opts[@]}" \
-    "$TRIVY_IMAGE" "$@" >"$OUT_FILE" 2>"$ERR_FILE" 9>&- </dev/null &
+    "$image" "$@" >"$OUT_FILE" 2>"$ERR_FILE" 9>&- </dev/null &
   CHILD=$!
   wait "$CHILD"; RC=$?
   CHILD=
@@ -194,10 +203,12 @@ SCAN_COMMON=(image "${TRIVY_COMMON[@]}" --cache-backend memory --skip-db-update 
              --offline-scan --scanners vuln --format json --quiet)
 
 # ---------------------------------------------------------------- databases
-# Each database is kept in the data directory between runs or not (settings TRIVY_DB_KEEP, JAVA_DB_KEEP):
+# Three databases, each kept in the data directory between runs or not (settings TRIVY_DB_KEEP, JAVA_DB_KEEP,
+# OS_PKG_DB_KEEP):
 #   Trivy vulnerability DB  cache/db        needed for every scan
 #   Trivy Java DB           cache/java-db   only with JAVA_DB=yes (jar files)
-# A database that is not kept is still downloaded into cache/ (both share Trivy's one --cache-dir mount, which is not
+#   Grype DB                grype | grype-run  only with the OS package match (see update_grype_db)
+# A Trivy DB that is not kept is still downloaded into cache/ (both share Trivy's one --cache-dir mount, which is not
 # split: Trivy may move files within it) and deleted when the run ends (drop_unkept_dbs, from on_exit). The size of
 # each DB after its download is noted in db-sizes, so the settings page can show it while the DB is not on disk.
 DB_SIZES=db-sizes
@@ -219,6 +230,7 @@ drop_unkept_dbs() {   # from on_exit: remove what the settings say must not stay
   [ -d "$DATA" ] || return 0
   keep TRIVY_DB_KEEP || rm_data_dir cache/db
   keep JAVA_DB_KEEP || rm_data_dir cache/java-db
+  rm_data_dir "$GRYPE_RUN"   # the Grype DB when not kept lives here, never in grype/
 }
 
 update_db() {   # needs $RUN_ID, the lock and C[]. In DB_ONLY mode ("Update database") DBs that are not kept are skipped.
@@ -247,15 +259,50 @@ update_db() {   # needs $RUN_ID, the lock and C[]. In DB_ONLY mode ("Update data
     note_db_size java "$DATA/cache/java-db"
   fi
   [ "${C[JAVA_DB]}" = no ] && [ -d "$DATA/cache/java-db" ] && { log "Java DB not used (setting): removing it"; rm_data_dir cache/java-db; }
+  if pkg_match_on && { keep OS_PKG_DB_KEEP || [ "${DB_ONLY:-0}" != 1 ]; }; then update_grype_db; fi
   [ "${DB_ONLY:-0}" = 1 ] && ! keep TRIVY_DB_KEEP && return 0
   [ -s "$DATA/cache/db/trivy.db" ]
 }
 
-ensure_image() {
-  docker image inspect "$TRIVY_IMAGE" >/dev/null 2>&1 9>&- && return 0
-  progress pull 0 0 "Trivy image"
-  log "pulling $TRIVY_IMAGE"
-  docker pull -q "$TRIVY_IMAGE" >/dev/null 9>&-
+# The OS package match (Grype + NVD CPEs) runs only with both OS settings on.
+pkg_match_on() { [ "${C[OS_SCAN]}" = yes ] && [ "${C[OS_PKG_MATCH]}" = yes ]; }
+# Where the Grype DB lives, under $DATA (Grype keeps it in <dir>/<schema>/vulnerability.db):
+#   OS_PKG_DB_KEEP=yes  grype      kept between runs, refreshed when Grype publishes a newer build (about daily)
+#   OS_PKG_DB_KEEP=no   grype-run  downloaded at the start of every run and deleted at its end (on_exit)
+GRYPE_KEPT=grype GRYPE_RUN=grype-run
+GRYPE_DB=$GRYPE_RUN
+grype_db_ok() { compgen -G "$DATA/$GRYPE_DB/[0-9]*/vulnerability.db" >/dev/null; }
+GRYPE_ENV=(-e GRYPE_DB_CACHE_DIR=/db -e GRYPE_CHECK_FOR_APP_UPDATE=false -e GRYPE_DB_AUTO_UPDATE=false)
+
+update_grype_db() {   # failure is a warning only: the rest of the scan does not depend on it
+  rm_data_dir "$GRYPE_RUN"                       # left over from a run that was killed
+  if keep OS_PKG_DB_KEEP; then GRYPE_DB=$GRYPE_KEPT
+  else
+    GRYPE_DB=$GRYPE_RUN
+    if [ -d "$DATA/$GRYPE_KEPT" ]; then log "OS package database is no longer kept (setting): removing $DATA/$GRYPE_KEPT"; rm_data_dir "$GRYPE_KEPT"; fi
+  fi
+  if [ -L "$DATA/$GRYPE_DB" ]; then warn "$DATA/$GRYPE_DB is a symlink, not used (OS package match skipped)"; return 1; fi
+  mkdir -p "$DATA/$GRYPE_DB/tmp" || { warn "cannot create $DATA/$GRYPE_DB"; return 1; }
+  local owner; owner=$(stat -c %u:%g "$DATA/$GRYPE_DB")
+  if ! ensure_image "$GRYPE_IMAGE" "Grype image"; then warn "could not pull the Grype image (OS package match)"; return 1; fi
+  progress db 0 0 "OS package database (Grype)"
+  log "updating the Grype DB"
+  OUT_FILE=$RUN/db.out; ERR_FILE=$RUN/db.err
+  # TMPDIR on disk: the DB archive is several hundred MB and the image has no /tmp
+  if ! grype_container db "$NAME-$RUN_ID-grypedb" --user "$owner" -e HOME=/db/tmp -e TMPDIR=/db/tmp "${GRYPE_ENV[@]}" \
+       -v "$DATA/$GRYPE_DB:/db" -- db update; then
+    warn "OS package database (Grype) update failed: $(fail_reason)"
+  fi
+  rm -rf -- "${DATA:?}/$GRYPE_DB/tmp"
+  note_db_size grype "$DATA/$GRYPE_DB"
+}
+
+ensure_image() {   # ensure_image [<image> <label>]
+  local img=${1:-$TRIVY_IMAGE} what=${2:-Trivy image}
+  docker image inspect "$img" >/dev/null 2>&1 9>&- && return 0
+  progress pull 0 0 "$what"
+  log "pulling $img"
+  docker pull -q "$img" >/dev/null 9>&-
 }
 
 # ---------------------------------------------------------------- image list
@@ -352,9 +399,64 @@ scan_os() {   # writes $WORK/os/{result,packages.txt,os.json,os.err}; needs $RUN
     why=$(fail_reason)
   fi
   [ "$res" = ok ] || log "FAILED Unraid OS scan: $why"
-  kv_write "$WORK/os/result" "result=$res" "error=$why" "version=$ver" "kernel=$kernel"
   done=$((done + 1))
+  PKG_RES=off PKG_WHY='' PKG_BASE=''
+  if pkg_match_on; then os_pkg_match "$ver" "$kernel"; done=$((done + 1)); fi
+  kv_write "$WORK/os/result" "result=$res" "error=$why" "version=$ver" "kernel=$kernel" \
+    "pkg_result=$PKG_RES" "pkg_error=$(clean "$PKG_WHY" 300)" "pkg_base=$PKG_BASE" "kernel_match=${C[OS_KERNEL_MATCH]}" "grype=${GRYPE_IMAGE#*:}"
   [ "$res" = ok ]
+}
+
+# ---------------------------------------------------------------- OS packages against NVD CPEs
+# Trivy has no advisory feed for Slackware, nor for Fedora / Fedora CoreOS, which Unraid 8 moves to. Both ship mostly
+# upstream versions, so the packages are matched by upstream name and version against NVD's CPE data instead:
+#   1. the package list is read here, on the host: Slackware's /var/lib/pkgtools/packages (file names), or the RPM
+#      database through rpm(8), plus each RPM's changelog (CVE ids Fedora names there are backported fixes);
+#   2. include/osinventory.php maps names to CPE vendor:product (include/cpe-map.txt, plus an optional
+#      cpe-map.txt next to the settings file) and writes a CycloneDX SBOM;
+#   3. Grype matches that SBOM, in a container with no network, no socket and nothing of the host but the SBOM.
+# NVD knows upstream versions only: a fix backported into the same version shows up as a finding unless the RPM
+# changelog names it or it is listed in os-ignore.txt next to the settings file (CVE id, optional package name).
+RPM_DB_DIRS=(usr/lib/sysimage/rpm var/lib/rpm usr/share/rpm)
+
+os_pkg_match() {   # os_pkg_match <version> <kernel>; sets PKG_RES, PKG_WHY, PKG_BASE; files in $WORK/os
+  local ver=$1 kernel=$2 d rpmdb='' cfgdir out
+  cfgdir=$(dirname "$CFG")
+  progress pkgmatch "$done" "$total" "OS packages"
+  if ! grype_db_ok; then PKG_RES=failed; PKG_WHY="no OS package database (Grype DB download failed)"; return 1; fi
+  if [ ! -s "$WORK/os/packages.txt" ]; then          # not Slackware: look for an RPM database
+    for d in "${RPM_DB_DIRS[@]}"; do [ -d "$OS_ROOT/$d" ] && { rpmdb=$d; break; }; done
+    if [ -z "$rpmdb" ]; then PKG_RES=failed; PKG_WHY="no package database found (neither Slackware pkgtools nor RPM)"; return 1; fi
+    if ! command -v "$RPM" >/dev/null 2>&1; then PKG_RES=failed; PKG_WHY="RPM database found but rpm is not installed"; return 1; fi
+    "$RPM" --root "${OS_ROOT:-/}" -qa --qf '%{NAME}\t%{EPOCHNUM}\t%{VERSION}\t%{RELEASE}\t%{ARCH}\t%{SOURCERPM}\n' 2>/dev/null \
+      | head -n 20000 >"$WORK/os/rpm.tsv"
+    "$RPM" --root "${OS_ROOT:-/}" -qa --qf '@@%{NAME}\n[%{CHANGELOGTEXT}\n]' 2>/dev/null | head -c 268435456 >"$WORK/os/rpm-changelog.txt"
+    [ -s "$WORK/os/rpm.tsv" ] || { PKG_RES=failed; PKG_WHY="rpm -qa returned no packages"; return 1; }
+    rm -f "$WORK/os/packages.txt"
+  fi
+  [ -f "$cfgdir/os-ignore.txt" ] && head -n 5000 "$cfgdir/os-ignore.txt" >"$WORK/os/ignore.txt"
+  local kargs=()
+  [ "${C[OS_KERNEL_MATCH]}" = yes ] && kargs=("kernel=$kernel")
+  if ! out=$("$PHP" "$PLUGIN_DIR/include/osinventory.php" "$WORK/os" "$PLUGIN_DIR/include/cpe-map.txt" "$cfgdir/cpe-map.txt" \
+        "${kargs[@]}" "os=Unraid OS $ver" 2>&1 9>&-); then
+    PKG_RES=failed; PKG_WHY="building the package list failed: $(tail -n1 <<<"$out")"; return 1
+  fi
+  PKG_BASE=$(sed -n 's/^base=\([a-z]*\)$/\1/p' <<<"$out")
+  log "OS packages: $(tr '\n' ' ' <<<"$out")"
+  if [ "$(sed -n 's/^mapped=\([0-9]*\)$/\1/p' <<<"$out")" = 0 ]; then
+    PKG_RES=failed; PKG_WHY="none of the OS packages has a CPE mapping"; return 1
+  fi
+  OUT_FILE=$WORK/os/pkgmatch.json; ERR_FILE=$WORK/os/pkgmatch.err
+  # validate-age off: like Trivy with --skip-db-update, scan with the DB there is; the report shows its date
+  if grype_container pkgmatch "$NAME-$RUN_ID-pkgmatch" --network none --read-only --tmpfs /tmp -e TMPDIR=/tmp -e HOME=/tmp \
+       "${GRYPE_ENV[@]}" -e GRYPE_DB_VALIDATE_AGE=false \
+       -v "$DATA/$GRYPE_DB:/db:ro" -v "$WORK/os/os.cdx.json:/in/os.cdx.json:ro" -- \
+       sbom:/in/os.cdx.json -o json --by-cve -q \
+     && [ "$(head -c1 "$OUT_FILE")" = '{' ]; then
+    PKG_RES=ok
+  else
+    PKG_RES=failed; PKG_WHY=$(fail_reason); log "FAILED OS package match: $PKG_WHY"; return 1
+  fi
 }
 
 # ---------------------------------------------------------------- the scan
@@ -408,7 +510,7 @@ do_run() {
   trap on_signal TERM INT HUP
   trap on_exit EXIT
   load_config
-  log "scan $RUN_ID started (scope=${C[SCOPE]} registry=${C[REGISTRY_CHECK]} os=${C[OS_SCAN]} timeout=${C[TIMEOUT]}m)"
+  log "scan $RUN_ID started (scope=${C[SCOPE]} registry=${C[REGISTRY_CHECK]} os=${C[OS_SCAN]} os_pkg=${C[OS_PKG_MATCH]} timeout=${C[TIMEOUT]}m)"
   [ ${#CFG_PROBLEMS[@]} -gt 0 ] && warn "invalid settings ignored, defaults used: ${CFG_PROBLEMS[*]}"
   preflight
   if ! update_db; then
@@ -436,6 +538,7 @@ do_run() {
   total=$n
   [ "${C[REGISTRY_CHECK]}" = yes ] && total=$((n + refs))
   [ "${C[OS_SCAN]}" = yes ] && total=$((total + 1))
+  pkg_match_on && total=$((total + 1))
   log "$n image(s) to scan"
 
   HARD_LIMIT=$((C[TIMEOUT] * 60 + 120))
@@ -517,13 +620,13 @@ do_run() {
 do_db_sizes() {   # for the settings page: <key>_now=<KiB> for each DB on disk, <key>_last=<KiB> measured at its last download
   local k d kb
   [ -d "$DATA" ] || return 0   # array stopped: report nothing, create nothing
-  for k in trivy:cache/db java:cache/java-db; do
+  for k in trivy:cache/db java:cache/java-db grype:grype; do
     d=$DATA/${k#*:}
     if [ -d "$d" ] && [ ! -L "$d" ]; then
       kb=$(du -sk "$d" 2>/dev/null | cut -f1); [[ $kb =~ ^[0-9]{1,12}$ ]] && echo "${k%%:*}_now=$kb"
     fi
   done
-  grep -E '^(trivy|java)=[0-9]{1,12}$' "$DATA/$DB_SIZES" 2>/dev/null | sed 's/=/_last=/'
+  grep -E '^(trivy|java|grype)=[0-9]{1,12}$' "$DATA/$DB_SIZES" 2>/dev/null | sed 's/=/_last=/'
   return 0
 }
 
@@ -591,6 +694,9 @@ do_uninstall() {
     if [[ $TRIVY_IMAGE =~ ^aquasec/trivy:[0-9.]+@sha256:[0-9a-f]{64}$ ]]; then
       docker rmi "$TRIVY_IMAGE" >/dev/null 2>&1 && echo "removed image $TRIVY_IMAGE"
     fi
+    if [[ $GRYPE_IMAGE =~ ^anchore/grype:v[0-9.]+@sha256:[0-9a-f]{64}$ ]]; then
+      docker rmi "$GRYPE_IMAGE" >/dev/null 2>&1 && echo "removed image $GRYPE_IMAGE"
+    fi
   else
     echo "kept $DATA (vulnerability databases and the last report) and the Trivy image"
   fi
@@ -608,8 +714,9 @@ case ${1:-} in
   config)    load_config; for k in $(printf '%s\n' "${!C[@]}" | sort); do echo "$k=${C[$k]}"; done
              [ ${#CFG_PROBLEMS[@]} -gt 0 ] && echo "INVALID=${CFG_PROBLEMS[*]}"; exit 0 ;;
   image)     echo "$TRIVY_IMAGE" ;;
+  grype-image) echo "$GRYPE_IMAGE" ;;
   db-sizes)  do_db_sizes ;;
   datadir)   echo "$DATA" ;;
   uninstall) do_uninstall ;;
-  *) echo "usage: $0 start|run|cron|stop|update-db|status|apply|config|image|db-sizes|datadir|uninstall" >&2; exit 2 ;;
+  *) echo "usage: $0 start|run|cron|stop|update-db|status|apply|config|image|grype-image|db-sizes|datadir|uninstall" >&2; exit 2 ;;
 esac

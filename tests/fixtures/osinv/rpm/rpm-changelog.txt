@@ -1,0 +1,6 @@
+@@openssl-libs
+- Fix CVE-2025-1111 (backport)
+  and CVE-2025-2222
+@@openssh-server
+- Rebase to 9.9p1
+@@shadow-utils
