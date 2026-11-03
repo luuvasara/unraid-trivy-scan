@@ -26,18 +26,24 @@
                        current: 'Image is current', newer: 'Newer image in registry', checked: 'Checked', na: 'Not applicable' };
   var IN_UPDATE = { gone: 'Fixed in newer image', present: 'Still in newer image', same: 'No newer image', '': '-' };
 
+  /* Target filter: 'all', 'os' (the Unraid OS), 'images' (container images), or 't<n>' (one target, by its index in
+   * report.images; not remembered, since the index belongs to one report). */
+  var TARGET_KINDS = ['all', 'os', 'images'];
+
   var state = { report: null, status: null, error: '', open: {},
-                f: { sev: SEVS.slice(), fix: 'fixable', q: '', sort: 'severity', dir: -1, page: 1, size: 50 } };
+                f: { sev: SEVS.slice(), fix: 'fixable', target: 'all', q: '', sort: 'severity', dir: -1, page: 1, size: 50 } };
   try {
     var saved = JSON.parse(localStorage.getItem('uts-filters') || 'null');
     if (saved && typeof saved === 'object') {
       if (Array.isArray(saved.sev)) state.f.sev = saved.sev.filter(function (s) { return SEVS.indexOf(s) >= 0; });
       if (FIX_FILTERS.some(function (x) { return x[0] === saved.fix; })) state.f.fix = saved.fix;
+      if (TARGET_KINDS.indexOf(saved.target) >= 0) state.f.target = saved.target;
       if ([25, 50, 100].indexOf(saved.size) >= 0) state.f.size = saved.size;
     }
   } catch (e) { /* storage unavailable: defaults */ }
   function persist() {
-    try { localStorage.setItem('uts-filters', JSON.stringify({ sev: state.f.sev, fix: state.f.fix, size: state.f.size })); } catch (e) { /* ignore */ }
+    var t = TARGET_KINDS.indexOf(state.f.target) >= 0 ? state.f.target : 'all';
+    try { localStorage.setItem('uts-filters', JSON.stringify({ sev: state.f.sev, fix: state.f.fix, target: t, size: state.f.size })); } catch (e) { /* ignore */ }
   }
 
   /* el('tag', {attr: value, className, onclick...}, child...) ; string children become text nodes */
@@ -260,13 +266,23 @@
   }
 
   /* ---- filtering / sorting ---- */
+  /* null for 'all', else a test on a target index (report.images) */
+  function targetTest(t, images) {
+    if (t === 'os') return function (n) { return isOs(images[n]); };
+    if (t === 'images') return function (n) { return !!images[n] && !isOs(images[n]); };
+    var m = /^t([0-9]+)$/.exec(t);
+    if (m) { var want = +m[1]; return function (n) { return n === want; }; }
+    return null;
+  }
   function filtered(r) {
     var f = state.f, q = f.q.trim().toLowerCase();
     var images = Array.isArray(r.images) ? r.images : [];
     var hiddenNoFix = 0;
+    var inTarget = targetTest(f.target, images);
     var list = r.cves.filter(function (c) {
       if (!c || typeof c !== 'object') return false;
       if (f.sev.indexOf(c.severity) < 0) return false;
+      if (inTarget && !(Array.isArray(c.affected) ? c.affected : []).some(function (a) { return a && inTarget(num(a.img)); })) return false;
       var fix = str(c.fix) || 'none';
       if (f.fix === 'fixable' && fix === 'none') { hiddenNoFix++; return false; }
       if (f.fix === 'package' && fix !== 'package' && fix !== 'both') return false;
@@ -313,12 +329,28 @@
     });
     var fixSel = el('select', { id: 'uts-fix', onchange: function (e) { f.fix = e.target.value; f.page = 1; persist(); renderTable(); } },
       FIX_FILTERS.map(function (o) { return el('option', { value: o[0], selected: f.fix === o[0] }, o[1]); }));
+    // Target: all / the Unraid OS / container images / one target. Targets that could not be scanned have no findings.
+    var images = state.report && Array.isArray(state.report.images) ? state.report.images : [];
+    var hasOs = images.some(isOs);
+    if (f.target === 'os' && !hasOs) f.target = 'all';
+    var one = /^t([0-9]+)$/.exec(f.target);
+    if (one && !(images[+one[1]] && images[+one[1]].scan === 'ok')) f.target = 'all';
+    var kinds = [['all', 'All targets']].concat(hasOs ? [['os', 'Unraid OS'], ['images', 'Container images']] : []);
+    var singles = [];
+    images.forEach(function (im, n) {
+      if (im && im.scan === 'ok') singles.push(el('option', { value: 't' + n, selected: f.target === 't' + n },
+        (isOs(im) ? 'OS: ' : '') + (str(im.name) || '?') + containersText(im)));
+    });
+    var targetSel = el('select', { id: 'uts-target', onchange: function (e) { f.target = e.target.value; f.page = 1; persist(); renderTable(); } },
+      kinds.map(function (o) { return el('option', { value: o[0], selected: f.target === o[0] }, o[1]); }),
+      singles.length > 1 ? el('optgroup', { label: 'One target' }, singles) : null);
     var search = el('input', { type: 'search', id: 'uts-q', placeholder: 'CVE, package, image, path', value: f.q,
       oninput: function (e) { f.q = e.target.value; f.page = 1; renderTable(); } });
     var size = el('select', { id: 'uts-size', onchange: function (e) { f.size = +e.target.value; f.page = 1; persist(); renderTable(); } },
       [25, 50, 100].map(function (n) { return el('option', { value: n, selected: f.size === n }, n + ' per page'); }));
     return el('div', { className: 'uts-filters', role: 'group', 'aria-label': 'Filters' },
       el('fieldset', { className: 'uts-sevs' }, el('legend', null, 'Severity'), sevBoxes),
+      el('label', { className: 'uts-field', 'for': 'uts-target' }, el('span', null, 'Target'), targetSel),
       el('label', { className: 'uts-field', 'for': 'uts-fix' }, el('span', null, 'Fix status'), fixSel),
       el('label', { className: 'uts-field', 'for': 'uts-q' }, el('span', null, 'Search'), search),
       el('label', { className: 'uts-field', 'for': 'uts-size' }, el('span', null, 'Rows'), size));
