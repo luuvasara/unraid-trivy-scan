@@ -95,13 +95,15 @@ function grype_vulns(array $j, int &$bad): array {
       ? implode(', ', array_filter(array_map(fn($x) => s($x, 60), array_slice($fix['versions'], 0, 5)), 'strlen')) : '';
     $url = url_ok($v['dataSource'] ?? '');
     if ($url === '') foreach ((is_array($v['urls'] ?? null) ? array_slice($v['urls'], 0, 5) : []) as $u) if (($url = url_ok($u)) !== '') break;
-    $cpe = ''; $bounded = false;
+    $cpe = ''; $none = false; $bounded = false;
     foreach ((is_array($m['matchDetails'] ?? null) ? $m['matchDetails'] : []) as $d) {
       // Grype writes "none (unknown)" when the NVD entry has no version range, i.e. lists EVERY version as affected
-      // (grype/db/v6 vulnerability_provider.go); such a match says nothing about the installed version
+      // (grype/db/v6 vulnerability_provider.go); such a match says nothing about the installed version. Only that
+      // positive marker counts as "no range": a missing or unexpected constraint keeps the finding.
       $vc = is_array($d) ? s($d['found']['versionConstraint'] ?? '', 200) : '';
-      if ($vc !== '' && strncmp($vc, 'none', 4) !== 0) $bounded = true;
+      if (strncmp($vc, 'none', 4) === 0) $none = true; else $bounded = true;
     }
+    $unbounded = $none && !$bounded;
     foreach ((is_array($m['matchDetails'] ?? null) ? $m['matchDetails'] : []) as $d) {
       $c = $d['searchedBy']['cpes'][0] ?? ($d['found']['cpes'][0] ?? null);
       if (is_string($c) && preg_match('/^cpe:2\.3:[aho]:([^:]{1,80}):([^:]{1,80}):/', $c, $cm)) { $cpe = s("$cm[1]:$cm[2]", 170); break; }
@@ -110,7 +112,7 @@ function grype_vulns(array $j, int &$bad): array {
     $title = preg_match('/^(.{20,200}?[.!?])(\s|$)/u', $desc, $tm) ? $tm[1] : s($desc, 200);
     $out[] = [$id, $sev, s($a['name'] ?? '', 200), s($a['version'] ?? '', 100), $fixed, $state,
               'OS package (NVD CPE match)', $title, $url, $cpe !== '' ? "cpe $cpe" : '',
-              $bounded, stripos($desc, '** DISPUTED **') !== false || stripos($desc, 'DISPUTED') === 0];
+              $unbounded, preg_match('/^\s*\*\* DISPUTED \*\*/', $desc) === 1];   // NVD's own marker, at the start
   }
   return $out;
 }
@@ -260,14 +262,18 @@ if ($osN !== null && $host['pkg_match'] === 'ok') {
     $st = $gj['descriptor']['db']['status']['built'] ?? ($gj['descriptor']['db']['built'] ?? '');
     $host['grype_db'] = s($st, 40);
     $sup = os_suppressions("$work/os");
-    $seen = [];
+    // one entry per CVE, package and version; it counts as "no range" or "disputed" only if EVERY match for it is
+    $groups = [];
     foreach (grype_vulns($gj, $bad) as $v) {
-      [$id, , $pkg, $inst, , , , , , $path] = $v;
-      $key = "$id|$pkg|$inst";
-      if (isset($seen[$key])) continue;
-      $seen[$key] = true;
+      $key = "$v[0]|$v[2]|$v[3]";
+      if (!isset($groups[$key])) { $groups[$key] = $v; continue; }
+      $groups[$key][10] = $groups[$key][10] && $v[10];
+      $groups[$key][11] = $groups[$key][11] && $v[11];
+    }
+    foreach ($groups as $v) {
+      [$id, , $pkg] = $v;
       $why = $sup[$id][$pkg] ?? ($sup[$id]['*'] ?? null);
-      if ($why === null && !$v[10]) $why = 'NVD gives no version range (lists every version as affected)';
+      if ($why === null && $v[10]) $why = 'NVD gives no version range (lists every version as affected)';
       if ($why === null && $v[11]) $why = 'disputed (NVD)';
       $v = array_slice($v, 0, 10);
       if ($why !== null) { if (count($host['suppressed']) < 2000) $host['suppressed'][] = [$id, $pkg, $why]; continue; }
