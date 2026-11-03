@@ -20,6 +20,8 @@ $uts_presets = ['' => 'Disabled', '30 3 * * *' => 'Daily at 03:30', '30 3 * * 0'
                 '30 3 1 * *' => 'Monthly, 1st at 03:30'];
 $uts_preset_cur = array_key_exists($uts['SCHEDULE'], $uts_presets) ? $uts['SCHEDULE'] : 'custom';
 $yn = ['no' => 'No', 'yes' => 'Yes'];
+$uts_keep = ['yes' => 'Keep in the data directory', 'no' => 'Download for every scan'];
+$uts_sizes = uts_db_sizes((string)@shell_exec(escapeshellarg(uts_path('script')) . ' db-sizes 2>/dev/null'));
 ?>
 <link rel="stylesheet" href="/plugins/unraid-trivy-scan/assets/trivy-scan.css?v=<?=$uts_v?>">
 <div class="uts uts-settings">
@@ -55,16 +57,28 @@ Apply the form to rewrite the file.</p>
   <dd><select name="SCOPE" id="uts-scope"><?=uts_options(['running' => 'Running containers', 'all' => 'Running and stopped containers'], $uts['SCOPE'])?></select></dd>
   <dt><label for="uts-timeout">Timeout per image</label></dt>
   <dd><select name="TIMEOUT" id="uts-timeout"><?=uts_options(['15' => '15 minutes', '30' => '30 minutes', '60' => '1 hour', '120' => '2 hours'], $uts['TIMEOUT'])?></select></dd>
-  <dt><label for="uts-java">Java database</label></dt>
-  <dd><select name="JAVA_DB" id="uts-java"><?=uts_options(['yes' => 'Download (about 1.5 GB on disk)', 'no' => 'Do not download'], $uts['JAVA_DB'])?></select></dd>
 </dl>
+<blockquote class="inline_help">An image, or the OS scan, that takes longer than the timeout is stopped and listed under "Could not scan" with the reason.</blockquote>
+
+<h3 class="uts-h">Unraid OS</h3>
 <dl>
   <dt><label for="uts-os">Scan the Unraid OS</label></dt>
   <dd><select name="OS_SCAN" id="uts-os"><?=uts_options(['yes' => 'Yes', 'no' => 'No'], $uts['OS_SCAN'])?></select></dd>
 </dl>
 <blockquote class="inline_help">Scans the operating system itself with <code>trivy rootfs</code>, in its own container without network access and without the Docker socket. Only /usr, /lib, /lib64, /bin, /sbin and /opt are given to it, read-only and without anything mounted below them; /mnt (array and pools), /boot, /etc, /proc, /sys and /var/lib/docker are never mounted. <strong>What it finds:</strong> Go programs (Docker, containerd, runc, rclone, ...), Node.js packages (including the Unraid API) and other language packages inside the OS. <strong>What it cannot check:</strong> Unraid is based on Slackware and Trivy has no Slackware advisory data, so the OS packages and the kernel are not matched against CVEs; the report lists them with their versions so you can compare them with the Unraid release notes.</blockquote>
 
-<blockquote class="inline_help">The scanner that reads your local images runs without network access, so it can only use databases downloaded beforehand. Without the Java database, images that contain Java packages (jar files) are listed under "Could not scan". An image, or the OS scan, that takes longer than the timeout is stopped and listed with the reason.</blockquote>
+<h3 class="uts-h">Databases</h3>
+<dl>
+  <dt><label for="uts-trivydb">Vulnerability database (Trivy)</label></dt>
+  <dd><select name="TRIVY_DB_KEEP" id="uts-trivydb" aria-describedby="uts-sz-trivy"><?=uts_options($uts_keep, $uts['TRIVY_DB_KEEP'])?></select>
+    <span class="uts-hint" id="uts-sz-trivy"><?=uts_h(uts_db_size($uts_sizes, 'trivy', '1.6 GB'))?></span></dd>
+  <dt><label for="uts-java">Java database (Trivy)</label></dt>
+  <dd><select name="JAVA_DB" id="uts-java"><?=uts_options(['yes' => 'Use (needed for images with jar files)', 'no' => 'Do not use'], $uts['JAVA_DB'])?></select></dd>
+  <dt><label for="uts-javadb">Keep the Java database</label></dt>
+  <dd><select name="JAVA_DB_KEEP" id="uts-javadb" aria-describedby="uts-sz-java"><?=uts_options($uts_keep, $uts['JAVA_DB_KEEP'])?></select>
+    <span class="uts-hint" id="uts-sz-java"><?=uts_h($uts['JAVA_DB'] === 'yes' ? uts_db_size($uts_sizes, 'java', '1.5 GB') : 'Not used')?></span></dd>
+</dl>
+<blockquote class="inline_help">The scanners run without network access, so every scan first brings its databases up to date in the data directory (<code><?=uts_h(uts_path('data'))?></code>), each in a container that has network access but no Docker socket. <strong>Keep</strong> leaves a database there between scans; it is then only downloaded again when a newer build is published (about daily), and "Update database" on the report page refreshes it. <strong>Download for every scan</strong> fetches it at the start of each scan and deletes it when the scan ends, so it takes no space between scans but costs that download every time; setting a database to this deletes the kept copy at the end of the next scan. Sizes: "on disk" is measured now; otherwise the size at the last download, or an estimate if it was never downloaded. Without the Java database, images that contain jar files are listed under "Could not scan".</blockquote>
 
 <h3 class="uts-h">Registry check</h3>
 <dl>
@@ -100,7 +114,7 @@ Apply the form to rewrite the file.</p>
 <h3 class="uts-h">About</h3>
 <dl class="uts-about">
   <dt>Scanner image</dt><dd><code><?=uts_h($uts_image ?: 'unknown')?></code></dd>
-  <dt>Data directory</dt><dd><code><?=uts_h(uts_path('data'))?></code> (inside Docker's appdata location; databases, about 1.6 GB plus the Java database; last report)</dd>
+  <dt>Data directory</dt><dd><code><?=uts_h(uts_path('data'))?></code> (inside Docker's appdata location: the databases, see "Databases" above, and the last report)</dd>
   <dt>Log</dt><dd><code>/var/log/unraid-trivy-scan.log</code></dd>
 </dl>
 </div>

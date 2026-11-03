@@ -82,6 +82,7 @@ echo ""
 echo "Trivy Scan &version; installed. No scan has been started."
 echo "Open Settings, Trivy Scan to run the first scan or set a schedule. The first scan downloads the pinned"
 echo "Trivy image and the vulnerability database (about 1.6 GB on disk, plus about 1.5 GB for the Java database)."
+echo "Settings, Databases: which databases are kept on disk between scans."
 </INLINE>
 </FILE>
 

@@ -73,7 +73,7 @@ DATA=${UTS_DATA:-$(appdata_root)/$NAME}
 
 # ---------------------------------------------------------------- settings (data, never executed)
 declare -A DEF=([SCHEDULE]="" [SCOPE]=running [TIMEOUT]=30 [JAVA_DB]=yes [REGISTRY_CHECK]=no [REGISTRY_AUTH]=no
-                [NOTIFY]=yes [OS_SCAN]=yes [SHOW_TAB]=no [DASH_TILE]=yes [REMOVE_DATA]=no)
+                [NOTIFY]=yes [OS_SCAN]=yes [TRIVY_DB_KEEP]=yes [JAVA_DB_KEEP]=yes [SHOW_TAB]=no [DASH_TILE]=yes [REMOVE_DATA]=no)
 declare -A C
 CFG_PROBLEMS=()
 
@@ -107,7 +107,7 @@ valid_value() {   # valid_value <key> <value>
     SCHEDULE) [ -z "$2" ] || cron_valid "$2" ;;
     SCOPE)    [ "$2" = running ] || [ "$2" = all ] ;;
     TIMEOUT)  [[ $2 =~ ^[0-9]{1,3}$ ]] && [ $((10#$2)) -ge 5 ] && [ $((10#$2)) -le 240 ] ;;
-    JAVA_DB|REGISTRY_CHECK|REGISTRY_AUTH|NOTIFY|OS_SCAN|SHOW_TAB|DASH_TILE|REMOVE_DATA) [ "$2" = yes ] || [ "$2" = no ] ;;
+    JAVA_DB|REGISTRY_CHECK|REGISTRY_AUTH|NOTIFY|OS_SCAN|TRIVY_DB_KEEP|JAVA_DB_KEEP|SHOW_TAB|DASH_TILE|REMOVE_DATA) [ "$2" = yes ] || [ "$2" = no ] ;;
     *) return 1 ;;
   esac
 }
@@ -194,25 +194,60 @@ SCAN_COMMON=(image "${TRIVY_COMMON[@]}" --cache-backend memory --skip-db-update 
              --offline-scan --scanners vuln --format json --quiet)
 
 # ---------------------------------------------------------------- databases
-update_db() {   # needs $RUN_ID, the lock and C[]
+# Each database is kept in the data directory between runs or not (settings TRIVY_DB_KEEP, JAVA_DB_KEEP):
+#   Trivy vulnerability DB  cache/db        needed for every scan
+#   Trivy Java DB           cache/java-db   only with JAVA_DB=yes (jar files)
+# A database that is not kept is still downloaded into cache/ (both share Trivy's one --cache-dir mount, which is not
+# split: Trivy may move files within it) and deleted when the run ends (drop_unkept_dbs, from on_exit). The size of
+# each DB after its download is noted in db-sizes, so the settings page can show it while the DB is not on disk.
+DB_SIZES=db-sizes
+rm_data_dir() {   # rm_data_dir <name>|<name>/<name>: a real directory under $DATA; neither it nor its parent a symlink
+  local d=$DATA/$1
+  [[ $1 =~ ^[a-z-]+(/[a-z-]+)?$ ]] && [ ! -L "$DATA/${1%%/*}" ] && [ -d "$d" ] && [ ! -L "$d" ] && rm -rf -- "$d"
+  return 0
+}
+note_db_size() {   # note_db_size <key> <dir>: KiB on disk now, into $DATA/db-sizes (key=KiB lines)
+  local kb f=$DATA/$DB_SIZES
+  [ -d "$2" ] && [ ! -L "$2" ] || return 0
+  kb=$(du -sk "$2" 2>/dev/null | cut -f1)
+  [[ $kb =~ ^[0-9]{1,12}$ ]] || return 0
+  { grep -v "^$1=" "$f" 2>/dev/null; echo "$1=$kb"; } | grep -E '^[a-z]+=[0-9]{1,12}$' >"$f.tmp.$$" && mv -f "$f.tmp.$$" "$f"
+}
+keep() { [ "${C[$1]:-${DEF[$1]}}" = yes ]; }   # keep <KEY>: a *_KEEP setting (defaults before load_config)
+
+drop_unkept_dbs() {   # from on_exit: remove what the settings say must not stay between runs
+  [ -d "$DATA" ] || return 0
+  keep TRIVY_DB_KEEP || rm_data_dir cache/db
+  keep JAVA_DB_KEEP || rm_data_dir cache/java-db
+}
+
+update_db() {   # needs $RUN_ID, the lock and C[]. In DB_ONLY mode ("Update database") DBs that are not kept are skipped.
   mkdir -p "$DATA/cache" || { warn "cannot create $DATA/cache"; return 1; }
   local owner; owner=$(stat -c %u:%g "$DATA/cache")
   HARD_LIMIT=3600
   OUT_FILE=$RUN/db.out; ERR_FILE=$RUN/db.err
-  progress db 0 0 "vulnerability database"
-  log "updating the vulnerability DB"
-  if ! trivy_container db "$NAME-$RUN_ID-db" --user "$owner" -e HOME=/tmp -v "$DATA/cache:/cache" -- \
-       image "${TRIVY_COMMON[@]}" --download-db-only; then
-    warn "vulnerability DB update failed: $(fail_reason)"
+  if keep TRIVY_DB_KEEP || [ "${DB_ONLY:-0}" != 1 ]; then
+    progress db 0 0 "vulnerability database"
+    log "updating the vulnerability DB"
+    if ! trivy_container db "$NAME-$RUN_ID-db" --user "$owner" -e HOME=/tmp -v "$DATA/cache:/cache" -- \
+         image "${TRIVY_COMMON[@]}" --download-db-only; then
+      warn "vulnerability DB update failed: $(fail_reason)"
+    fi
+    note_db_size trivy "$DATA/cache/db"
+  else
+    log "vulnerability DB is not kept (setting): nothing to update"
   fi
-  if [ "${C[JAVA_DB]}" = yes ]; then
+  if [ "${C[JAVA_DB]}" = yes ] && { keep JAVA_DB_KEEP || [ "${DB_ONLY:-0}" != 1 ]; }; then
     progress db 0 0 "Java database"
     log "updating the Java DB"
     if ! trivy_container db "$NAME-$RUN_ID-javadb" --user "$owner" -e HOME=/tmp -v "$DATA/cache:/cache" -- \
          image "${TRIVY_COMMON[@]}" --download-java-db-only; then
       warn "Java DB update failed: $(fail_reason)"
     fi
+    note_db_size java "$DATA/cache/java-db"
   fi
+  [ "${C[JAVA_DB]}" = no ] && [ -d "$DATA/cache/java-db" ] && { log "Java DB not used (setting): removing it"; rm_data_dir cache/java-db; }
+  [ "${DB_ONLY:-0}" = 1 ] && ! keep TRIVY_DB_KEEP && return 0
   [ -s "$DATA/cache/db/trivy.db" ]
 }
 
@@ -338,6 +373,7 @@ on_exit() {
   kill_containers "$RUN_ID"
   rm -f "$RUN/pid" "$RUN/progress" "$RUN"/db.out "$RUN"/db.err
   [ -n "${WORK:-}" ] && [ -d "$WORK" ] && rm -rf -- "$WORK"
+  drop_unkept_dbs   # DBs whose "keep" setting is off do not stay between runs
 }
 
 take_lock() {
@@ -478,12 +514,26 @@ do_run() {
   return 0
 }
 
+do_db_sizes() {   # for the settings page: <key>_now=<KiB> for each DB on disk, <key>_last=<KiB> measured at its last download
+  local k d kb
+  [ -d "$DATA" ] || return 0   # array stopped: report nothing, create nothing
+  for k in trivy:cache/db java:cache/java-db; do
+    d=$DATA/${k#*:}
+    if [ -d "$d" ] && [ ! -L "$d" ]; then
+      kb=$(du -sk "$d" 2>/dev/null | cut -f1); [[ $kb =~ ^[0-9]{1,12}$ ]] && echo "${k%%:*}_now=$kb"
+    fi
+  done
+  grep -E '^(trivy|java)=[0-9]{1,12}$' "$DATA/$DB_SIZES" 2>/dev/null | sed 's/=/_last=/'
+  return 0
+}
+
 do_update_db() {
   take_lock
   exec >>"$LOG" 2>&1
   RUN_ID="$(date +%s)-$$"; echo $$ >"$RUN/pid"
   trap on_signal TERM INT HUP; trap on_exit EXIT
   load_config; preflight
+  DB_ONLY=1
   if update_db; then log "databases up to date"; else log "database update failed"; exit 1; fi
 }
 
@@ -558,7 +608,8 @@ case ${1:-} in
   config)    load_config; for k in $(printf '%s\n' "${!C[@]}" | sort); do echo "$k=${C[$k]}"; done
              [ ${#CFG_PROBLEMS[@]} -gt 0 ] && echo "INVALID=${CFG_PROBLEMS[*]}"; exit 0 ;;
   image)     echo "$TRIVY_IMAGE" ;;
+  db-sizes)  do_db_sizes ;;
   datadir)   echo "$DATA" ;;
   uninstall) do_uninstall ;;
-  *) echo "usage: $0 start|run|cron|stop|update-db|status|apply|config|image|datadir|uninstall" >&2; exit 2 ;;
+  *) echo "usage: $0 start|run|cron|stop|update-db|status|apply|config|image|db-sizes|datadir|uninstall" >&2; exit 2 ;;
 esac

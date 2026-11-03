@@ -65,6 +65,7 @@ printf '%s\n' '* * * * * touch /PWN4' >>"$W/h.cfg"
 OUT=$(UTS_CFG=$W/h.cfg bash "$S" config)
 want='DASH_TILE=yes
 JAVA_DB=yes
+JAVA_DB_KEEP=yes
 NOTIFY=no
 OS_SCAN=yes
 REGISTRY_AUTH=no
@@ -73,7 +74,8 @@ REMOVE_DATA=no
 SCHEDULE=
 SCOPE=running
 SHOW_TAB=yes
-TIMEOUT=60'
+TIMEOUT=60
+TRIVY_DB_KEEP=yes'
 [ "$(grep -v '^INVALID=' <<<"$OUT")" = "$want" ] && ok "bash reader: valid keys taken, invalid -> defaults, unknown keys ignored, CRLF ok" \
   || bad "bash reader output: $(tr '\n' ' ' <<<"$OUT")"
 inv_sh=$(sed -n 's/^INVALID=//p' <<<"$OUT" | tr ' ' '\n' | sort | tr '\n' ' ')
@@ -181,6 +183,32 @@ FAKE_OS_FAIL=1 osrun 'OS_SCAN="yes"' 'JAVA_DB="no"'
 osrun 'OS_SCAN="no"' 'JAVA_DB="no"'
 grep -q 'role=os' "$W/docker.log" && bad "OS_SCAN=no still ran an OS container" || ok "OS_SCAN=no: no OS container"
 [ "$(osrep 'json_encode($r["host"])." ".$r["summary"]["os"]')" = "null off" ] && ok "OS_SCAN=no: no OS target in the report" || bad "OS_SCAN=no report"
+
+# ---------------------------------------------------------------- keeping the Trivy databases, sizes for the settings page
+OSD=$W/osdata/unraid-trivy-scan
+mkdir -p "$OSD/cache/java-db"; echo javadb >"$OSD/cache/java-db/trivy-java.db"
+osrun 'OS_SCAN="no"' 'JAVA_DB="yes"' 'TRIVY_DB_KEEP="yes"' 'JAVA_DB_KEEP="yes"'
+[ -f "$OSD/cache/db/trivy.db" ] && [ -f "$OSD/cache/java-db/trivy-java.db" ] && ok "TRIVY_DB_KEEP=yes, JAVA_DB_KEEP=yes: both stay after the scan" || bad "kept Trivy DBs removed"
+SZ=$(UTS_DATA=$OSD bash "$S" db-sizes)
+grep -qE '^trivy_now=[0-9]+$' <<<"$SZ" && grep -qE '^java_now=[0-9]+$' <<<"$SZ" && grep -qE '^trivy_last=[0-9]+$' <<<"$SZ" \
+  && ok "db-sizes: size on disk for present DBs, size at last download noted" || bad "db-sizes: $SZ"
+osrun 'OS_SCAN="no"' 'JAVA_DB="yes"' 'TRIVY_DB_KEEP="no"' 'JAVA_DB_KEEP="no"' && [ "$(sed -n 's/^result=//p' "$OSD/report/last-run")" = ok ] \
+  && [ ! -e "$OSD/cache/db" ] && [ ! -e "$OSD/cache/java-db" ] && [ -d "$OSD/cache" ] \
+  && ok "TRIVY_DB_KEEP=no, JAVA_DB_KEEP=no: scan works, both deleted when it ends" || bad "unkept Trivy DBs: $(ls -R "$OSD/cache")"
+SZ=$(UTS_DATA=$OSD bash "$S" db-sizes)
+! grep -q '^trivy_now' <<<"$SZ" && grep -qE '^trivy_last=[0-9]+$' <<<"$SZ" && grep -qE '^java_last=[0-9]+$' <<<"$SZ" \
+  && ok "db-sizes: not on disk, last download size still reported" || bad "db-sizes after delete: $SZ"
+: >"$W/docker.log"; printf '%s\n' 'TRIVY_DB_KEEP="no"' 'JAVA_DB_KEEP="no"' 'OS_SCAN="no"' >"$W/os.cfg"
+UTS_CFG=$W/os.cfg UTS_DATA=$OSD UTS_RUN=$W/osrun UTS_LOG=$W/os.log UTS_PLUGIN_DIR=$P bash "$S" update-db --foreground; RC=$?
+[ "$RC" = 0 ] && ! grep -q 'download-db-only\|download-java-db-only' "$W/docker.log" && ok "update-db with nothing kept: no download, success" || bad "update-db nothing kept: rc=$RC $(cat "$W/docker.log")"
+mkdir -p "$OSD/cache/db"; echo x >"$OSD/cache/db/trivy.db"
+mkdir -p "$W/victim2"; touch "$W/victim2/keep"; rm -rf "$OSD/cache/java-db"; ln -s "$W/victim2" "$OSD/cache/java-db"
+osrun 'OS_SCAN="no"' 'JAVA_DB="yes"' 'JAVA_DB_KEEP="no"'
+[ -e "$W/victim2/keep" ] && ok "JAVA_DB_KEEP=no: a symlinked java-db is not followed or emptied" || bad "followed a java-db symlink"
+rm -f "$OSD/cache/java-db"
+php -r 'require $argv[1]; $s = uts_db_sizes("trivy_now=1700000\njava_last=2048\nevil_now=1\ntrivy_now=x\n"); echo uts_db_size($s,"trivy","1.6 GB"), "|", uts_db_size($s,"java","1.5 GB"), "\n";' "$P/include/lib.php" \
+  | grep -qx 'On disk: 1.6 GB|Not on disk now; 2 MB at its last download' && ok "settings page size texts: on disk / last download; junk lines ignored" || bad "size texts"
+php -r 'require $argv[1]; echo uts_db_size([], "java", "1.5 GB"), "\n";' "$P/include/lib.php" | grep -qx 'Not downloaded yet; about 1.5 GB (estimate)' && ok "settings page size text: estimate when never downloaded" || bad "estimate text"
 
 # ---------------------------------------------------------------- data dir follows Docker's appdata location (F2)
 # Real file: /boot/config/docker.cfg line 4 on a 7.3.4 server is DOCKER_APP_CONFIG_PATH="/mnt/user/appdata/" (quoted, trailing slash).
