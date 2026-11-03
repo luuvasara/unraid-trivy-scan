@@ -244,7 +244,7 @@ grep -q -- "-v $GDB:/db anchore/grype:.* db update$" <<<"$GL" && ! grep -q 'dock
 osrun 'OS_SCAN="yes"' 'JAVA_DB="no"' 'OS_PKG_DB_KEEP="yes"'
 grep -- 'role=db' "$W/docker.log" | grep -q -- "-v $OSD/grype:/db anchore/grype" && grep -- 'role=pkgmatch' "$W/docker.log" | grep -q -- "-v $OSD/grype:/db:ro " \
   && [ -f "$OSD/grype/6/vulnerability.db" ] && [ ! -e "$OSD/grype/tmp" ] && [ ! -e "$GDB" ] \
-  && ok "OS_PKG_DB_KEEP=yes: DB downloaded into, kept in and mapped read-only from $OSD/grype" || bad "keep=yes: $(ls -R "$OSD" | head -20)"
+  && ok "OS_PKG_DB_KEEP=yes: DB downloaded into, kept in and mapped read-only from $OSD/grype" || bad "keep=yes: $(find "$OSD" | head -20)"
 : >"$W/docker.log"
 UTS_CFG=$W/os.cfg UTS_DATA=$OSD UTS_RUN=$W/osrun UTS_LOG=$W/os.log UTS_PLUGIN_DIR=$P bash "$S" update-db --foreground
 grep -q 'anchore/grype.* db update' "$W/docker.log" && ok "update-db with OS_PKG_DB_KEEP=yes refreshes the kept Grype DB" || bad "update-db keep=yes: $(cat "$W/docker.log")"
@@ -342,9 +342,9 @@ FAKE_OS_JSON=$W/big.json osrun 'OS_SCAN="yes"' 'JAVA_DB="no"'
 
 # Header tabs (Menu="Tasks:n"): Unraid labels them with the page's Name, else the upper-cased file name
 # (read on a 7.3.4 server: dynamix/include/DefaultPageLayout/Navigation/Main.php:23 `_(_var($button, 'Name', $pageName))`).
-# 2026.11.01c shipped CveLensTab.page without Name and showed "TRIVYSCANTAB". The browser title (DefaultPageLayout.php:
+# 2026.11.01c shipped TrivyScanTab.page without Name and showed "TRIVYSCANTAB". The browser title (DefaultPageLayout.php:   # keep-old-name
 # <title>NAME/$myPage['name']</title>) and the URL still use the file name, so up to 2026.11.02 the selected tab read
-# "Tower/CveLensTab"; the file is now named after the label.
+# "Tower/TrivyScanTab"; the file is now named after the label.   # keep-old-name
 for f in "$P"/*.page; do
   if grep -Eq '^Menu="Tasks(:[0-9]+)?"' "$f"; then
     grep -Eq '^Name="[A-Za-z][A-Za-z ]+"$' "$f" && ok "Tasks page $(basename "$f") has a Name (header tab label)" || bad "Tasks page $(basename "$f") has no Name: the tab would show the file name"
@@ -352,7 +352,7 @@ for f in "$P"/*.page; do
     [ "$(basename "$f" .page)" = "${nm// /}" ] && ok "Tasks page file name matches its Name ($nm): browser title and URL read the same" || bad "Tasks page $(basename "$f") is not named after its Name '$nm'"
   fi
 done
-[ ! -e "$P/CveLensTab.page" ] && ! grep -rq 'CveLensTab' "$P" && ok "no reference to the old CveLensTab page name left" || bad "CveLensTab still referenced"
+[ ! -e "$P/TrivyScanTab.page" ] && ! grep -rq 'TrivyScanTab' "$P" && ok "no reference to the old TrivyScanTab page name left" || bad "TrivyScanTab still referenced"   # keep-old-name
 
 # ---------------------------------------------------------------- .plg lifecycle
 PLG=$HERE/unraid-cve-lens.plg
@@ -386,4 +386,92 @@ grep -c 'GRYPE_IMAGE=' "$S" | grep -qx 1 && ! grep -rq 'anchore/grype:' "$P" --i
 # 2026.11.02 showed "scan stopped before it finished? the previous report is kept" because of a ';'.
 bad_msgs=$(grep -oE 'last_run [a-z]+ "[^"$]*"' "$S" | sed -E 's/^last_run [a-z]+ "(.*)"$/\1/' | LC_ALL=C grep -n "[^A-Za-z0-9._/:@ ()+,=-]")
 [ -z "$bad_msgs" ] && ok "status messages contain only characters clean() keeps" || bad "status messages clean() would mangle: $bad_msgs"
+
+# keep-old-begin
+# ---------------------------------------------------------------- migration from "Trivy Scan" (unraid-trivy-scan)
+MIG=$P/scripts/migrate-from-trivy-scan
+M=$W/mig; rm -rf "$M"; mkdir -p "$M/bin2"
+cat >"$M/bin2/docker" <<EOF
+#!/bin/sh
+echo "docker \$*" >>"$M/docker.log"
+case " \$* " in *" ps "*"label=unraid-trivy-scan=1"*) echo abc123 ;; esac
+exit 0
+EOF
+chmod 755 "$M/bin2/docker"
+printf '#!/bin/sh\necho update_cron >>"%s/cron.log"\n' "$M" >"$M/update_cron"; chmod 755 "$M/update_cron"
+mig() {   # mig <mode> [appdata dir]: run the migration against the fake tree under $M
+  PATH="$M/bin2:$PATH" UTS_OLD_FLASH=$M/flash/unraid-trivy-scan UTS_NEW_FLASH=$M/flash/unraid-cve-lens UTS_OLD_RUN=$M/oldrun \
+    UTS_OLD_PLUGIN_DIR=$M/nonexistent UTS_UPDATE_CRON=$M/update_cron UTS_CVELENS=$S UTS_DATA=${2:-$M/appdata}/unraid-cve-lens bash "$MIG" "${1:-all}"
+}
+mkdir -p "$M/flash/unraid-trivy-scan" "$M/appdata/unraid-trivy-scan/cache/db" "$M/appdata/unraid-trivy-scan/report"
+printf 'SCHEDULE="15 4 * * 1"\nSCOPE="all"\n' >"$M/flash/unraid-trivy-scan/unraid-trivy-scan.cfg"
+printf '# unraid-trivy-scan: scheduled scan\n15 4 * * 1 /usr/local/emhttp/plugins/unraid-trivy-scan/scripts/trivy-scan cron >/dev/null 2>&1\n' >"$M/flash/unraid-trivy-scan/unraid-trivy-scan.cron"
+echo CVE-2020-0001 >"$M/flash/unraid-trivy-scan/os-ignore.txt"; echo "x y" >"$M/flash/unraid-trivy-scan/cpe-map.txt"; echo img >"$M/flash/unraid-trivy-scan/ignore.txt"
+echo db >"$M/appdata/unraid-trivy-scan/cache/db/trivy.db"; echo '{}' >"$M/appdata/unraid-trivy-scan/report/report.json"
+mig all >"$M/run1.out" 2>&1; rc=$?
+F=$M/flash/unraid-cve-lens
+[ $rc = 0 ] && [ "$(cat "$F/unraid-cve-lens.cfg")" = "$(cat "$M/flash/unraid-trivy-scan/unraid-trivy-scan.cfg")" ] && [ "$(cat "$F/os-ignore.txt")" = CVE-2020-0001 ] \
+  && [ -f "$F/cpe-map.txt" ] && [ -f "$F/ignore.txt" ] && ok "migration: cfg, os-ignore, cpe-map and ignore.txt are copied to the new flash folder" || bad "migration copy: rc=$rc $(cat "$M/run1.out"); $(printf "%s " "$F"/*)"
+[ "$(grep -v '^#' "$F/unraid-cve-lens.cron")" = "15 4 * * 1 /usr/local/emhttp/plugins/unraid-cve-lens/scripts/cve-lens cron >/dev/null 2>&1" ] \
+  && ! grep -q 'trivy-scan' "$F/unraid-cve-lens.cron" && ok "migration: the schedule is copied with the command path rewritten" || bad "migration cron: $(cat "$F/unraid-cve-lens.cron")"
+[ -f "$M/flash/unraid-trivy-scan/unraid-trivy-scan.cfg" ] && [ ! -e "$M/flash/unraid-trivy-scan/unraid-trivy-scan.cron" ] && [ -f "$M/flash/unraid-trivy-scan/unraid-trivy-scan.cron.migrated" ] \
+  && grep -q update_cron "$M/cron.log" && ok "migration: old flash folder kept, old schedule renamed out of update_cron's glob and cron refreshed" || bad "migration old cron"
+[ ! -e "$M/appdata/unraid-trivy-scan" ] && [ "$(cat "$M/appdata/unraid-cve-lens/cache/db/trivy.db")" = db ] && [ -f "$M/appdata/unraid-cve-lens/report/report.json" ] \
+  && ok "migration: data folder moved (not copied) with its databases and report" || bad "migration data move: $(find "$M/appdata" -maxdepth 1)"
+grep -q 'docker ps -aq --filter label=unraid-trivy-scan=1' "$M/docker.log" && grep -q 'docker rm -f abc123' "$M/docker.log" \
+  && ok "migration: containers with the OLD label are removed" || bad "migration old-label cleanup: $(cat "$M/docker.log")"
+# idempotent: a second run changes nothing, and never overwrites what the user changed since
+echo 'SCHEDULE=""' >"$F/unraid-cve-lens.cfg"; before=$(cd "$M" && find flash appdata -type f -exec md5sum {} + | sort)
+mig all >"$M/run2.out" 2>&1; rc=$?; after=$(cd "$M" && find flash appdata -type f -exec md5sum {} + | sort)
+[ $rc = 0 ] && [ "$(cat "$F/unraid-cve-lens.cfg")" = 'SCHEDULE=""' ] && [ -d "$M/appdata/unraid-cve-lens" ] && [ ! -e "$M/appdata/unraid-trivy-scan" ] && [ "$before" = "$after" ] \
+  && ok "migration: second run is a no-op (settings the user changed are not overwritten)" || bad "migration idempotency: rc=$rc $(cat "$M/run2.out")"
+# symlink guard: an old data folder that is a symlink is never moved or followed
+mkdir -p "$M/victim"; echo keep >"$M/victim/keep"; mkdir -p "$M/app-sym"; ln -s "$M/victim" "$M/app-sym/unraid-trivy-scan"
+mig data "$M/app-sym" >"$M/sym.out" 2>&1; rc=$?
+[ $rc = 0 ] && [ -L "$M/app-sym/unraid-trivy-scan" ] && [ ! -e "$M/app-sym/unraid-cve-lens" ] && [ -f "$M/victim/keep" ] && grep -q 'symlink' "$M/sym.out" \
+  && ok "migration: a symlinked old data folder is left alone" || bad "migration symlink guard: rc=$rc $(cat "$M/sym.out"); $(find "$M/app-sym")"
+# array stopped: the appdata directory does not exist; nothing is created, the next run (array started) moves it
+mig data "$M/not-mounted/appdata" >"$M/stopped.out" 2>&1; rc=$?
+[ $rc = 0 ] && [ ! -e "$M/not-mounted" ] && ok "migration: appdata location missing (array stopped) is skipped and creates nothing" || bad "migration array stopped: rc=$rc $(cat "$M/stopped.out"); $(find "$M" -maxdepth 1)"
+mkdir -p "$M/app-late"; mig data "$M/app-late" >/dev/null 2>&1; [ ! -e "$M/app-late/unraid-cve-lens" ] && ok "migration: nothing to move, nothing created" || bad "migration created a folder out of nothing"
+mkdir -p "$M/app-late/unraid-trivy-scan"; echo late >"$M/app-late/unraid-trivy-scan/f"
+mig data "$M/app-late" >/dev/null 2>&1; [ "$(cat "$M/app-late/unraid-cve-lens/f" 2>/dev/null)" = late ] && [ ! -e "$M/app-late/unraid-trivy-scan" ] \
+  && ok "migration: retried later, the data folder is moved once the location exists" || bad "migration retry"
+# the new folder already exists: both stay
+mkdir -p "$M/app-both/unraid-trivy-scan" "$M/app-both/unraid-cve-lens"; echo o >"$M/app-both/unraid-trivy-scan/f"
+mig data "$M/app-both" >/dev/null 2>&1; [ -f "$M/app-both/unraid-trivy-scan/f" ] && [ ! -e "$M/app-both/unraid-cve-lens/f" ] && ok "migration: never merges into an existing new data folder" || bad "migration both exist"
+# a running old scan blocks the move
+mkdir -p "$M/app-run/unraid-trivy-scan" "$M/oldrun"
+printf '#!/bin/sh\nsleep 30\n' >"$M/trivy-scan"; chmod 755 "$M/trivy-scan"; "$M/trivy-scan" & TP=$!; echo $TP >"$M/oldrun/pid"
+mig data "$M/app-run" >/dev/null 2>&1; [ -d "$M/app-run/unraid-trivy-scan" ] && [ ! -e "$M/app-run/unraid-cve-lens" ] && ok "migration: not moved while an old scan is running" || bad "migration moved under a running old scan"
+kill $TP 2>/dev/null; rm -rf "$M/oldrun"
+# the main script accepts the old label for cleanup (one release)
+: >"$M/docker.log"; PATH="$M/bin2:$PATH" UTS_CFG=$M/none.cfg UTS_DATA=$M/appdata/unraid-cve-lens UTS_RUN=$M/run bash "$S" stop >/dev/null 2>&1
+grep -q 'docker ps -aq --filter label=unraid-cve-lens=1' "$M/docker.log" && grep -q 'docker ps -aq --filter label=unraid-trivy-scan=1' "$M/docker.log" && grep -q 'docker rm -f abc123' "$M/docker.log" \
+  && ok "cve-lens stop removes containers of the new and the old label" || bad "old-label cleanup in stop: $(cat "$M/docker.log")"
+grep -q 'migrate-from-trivy-scan' <<<"$INST" && grep -q 'migrate-from-trivy-scan all' "$PLG" && ok ".plg post-install runs the migration (inline, every boot)" || bad ".plg does not run the migration"
+
+# the transition file at the old path
+BR=$HERE/unraid-trivy-scan.plg
+BRI=$(php -r '$d=new DOMDocument(); $d->load($argv[1], LIBXML_NOENT); foreach ($d->getElementsByTagName("FILE") as $f) { if ($f->getAttribute("Method")==="remove") continue; foreach ($f->getElementsByTagName("INLINE") as $i) echo $i->textContent; }' "$BR")
+BRR=$(php -r '$d=new DOMDocument(); $d->load($argv[1], LIBXML_NOENT); foreach ($d->getElementsByTagName("FILE") as $f) if ($f->getAttribute("Method")==="remove") foreach ($f->getElementsByTagName("INLINE") as $i) echo $i->textContent;' "$BR")
+php -r '$d=new DOMDocument(); exit($d->load($argv[1], LIBXML_NOENT) ? 0 : 1);' "$BR" 2>/dev/null && ok "bridge: unraid-trivy-scan.plg is well-formed XML" || bad "bridge .plg does not parse"
+BRV=$(php -r '$d=new DOMDocument(); $d->load($argv[1], LIBXML_NOENT); $p=$d->documentElement; echo $p->getAttribute("name")," ",$p->getAttribute("version")," ",$p->getAttribute("pluginURL");' "$BR")
+NEWURL=$(php -r '$d=new DOMDocument(); $d->load($argv[1], LIBXML_NOENT); echo $d->documentElement->getAttribute("pluginURL");' "$PLG")
+read -r bn bv bu <<<"$BRV"
+[ "$bn" = unraid-trivy-scan ] && [ "$bu" = https://raw.githubusercontent.com/luuvasara/unraid-trivy-scan/main/unraid-trivy-scan.plg ] && [[ "$bv" > 2026.11.03 ]] \
+  && ok "bridge: keeps the old name and pluginURL, version $bv sorts above the last real release 2026.11.03" || bad "bridge identity: $BRV"
+grep -qF "plugin install $NEWURL" <<<"$BRI" && [[ $NEWURL == */unraid-cve-lens.plg ]] && ok "bridge: install runs 'plugin install <raw URL of unraid-cve-lens.plg>' ($NEWURL)" || bad "bridge install command: $BRI"
+grep -q 'exit 1' <<<"$BRI" && grep -q 'ERROR' <<<"$BRI" && ok "bridge: aborts loudly when the new plugin cannot be installed" || bad "bridge has no failure exit"
+grep -Eq "nohup setsid bash -c 'sleep [0-9]+; plugin remove unraid-trivy-scan.plg'" <<<"$BRI" && ok "bridge: old entry is removed by a detached, delayed job" || bad "bridge does not schedule the delayed remove"
+! grep -q '<URL>' "$BR" && ok "bridge: no downloaded FILE (no package of its own)" || bad "bridge downloads a file"
+! grep -Eq 'trivy-scan (uninstall|stop)|rm -rf[^\n]*(appdata|cve-lens)|unraid-cve-lens' <<<"$BRR" && grep -q 'removepkg' <<<"$BRR" && ok "bridge: remove block touches only old-plugin pieces, never the migrated data" || bad "bridge remove block: $BRR"
+# the rename script is idempotent: in a copy of the tree (committed state plus new files), a second run changes nothing
+RN=$W/rename-tree; rm -rf "$RN"; mkdir -p "$RN"
+(cd "$HERE" && git ls-files -z --cached --others --exclude-standard | grep -zv '^packages/' | xargs -0 cp --parents -t "$RN" 2>/dev/null)
+if (cd "$RN" && git init -q . && git add -A . && git -c user.name=t -c user.email=t@localhost commit -qm base && bash tools/rename-to-cve-lens.sh >/dev/null 2>&1 \
+    && git add -A . && git -c user.name=t -c user.email=t@localhost commit -qm again --allow-empty && bash tools/rename-to-cve-lens.sh >/dev/null 2>&1 && [ -z "$(git status --porcelain)" ]); then
+  ok "tools/rename-to-cve-lens.sh: re-running it on a renamed tree changes nothing"
+else bad "rename script is not idempotent: $(cd "$RN" && git status --short | head -5)"; fi
+# keep-old-end
 exit $fail

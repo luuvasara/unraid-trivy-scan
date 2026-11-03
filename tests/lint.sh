@@ -15,7 +15,7 @@ while IFS= read -r -d '' blk; do
 done < <(php -r '$d=new DOMDocument(); $d->load($argv[1], LIBXML_NOENT); foreach ($d->getElementsByTagName("INLINE") as $i) echo $i->textContent, "\0";' "$HERE/unraid-cve-lens.plg")
 [ "$n" -eq 3 ] && ok ".plg parses with entities resolved, 3 inline blocks" || bad ".plg inline blocks: $n"
 
-FILES=(src/usr/local/emhttp/plugins/unraid-cve-lens/scripts/cve-lens src/usr/local/emhttp/plugins/unraid-cve-lens/event/stopping_docker tests/real-unraid-test.sh build.sh tests/lint.sh tests/unit.sh tests/e2e.sh tests/unraid-os.sh
+FILES=(src/usr/local/emhttp/plugins/unraid-cve-lens/scripts/cve-lens src/usr/local/emhttp/plugins/unraid-cve-lens/scripts/migrate-from-trivy-scan src/usr/local/emhttp/plugins/unraid-cve-lens/event/stopping_docker tests/real-unraid-test.sh build.sh tests/lint.sh tests/unit.sh tests/e2e.sh tests/unraid-os.sh
        tests/run-tests.sh tests/render/render-test.sh tests/render/fetch-webgui.sh)
 for f in "${FILES[@]}"; do [ -f "$HERE/$f" ] || bad "missing $f"; done
 if docker image inspect koalaman/shellcheck:stable >/dev/null 2>&1; then

@@ -1,0 +1,67 @@
+<?xml version='1.0' standalone='yes'?>
+<!DOCTYPE PLUGIN [
+  <!ENTITY name      "unraid-trivy-scan">
+  <!ENTITY version   "2026.11.04">
+  <!ENTITY pluginURL "https://raw.githubusercontent.com/luuvasara/unraid-trivy-scan/main/unraid-trivy-scan.plg">
+  <!ENTITY newURL    "https://raw.githubusercontent.com/luuvasara/unraid-trivy-scan/main/unraid-cve-lens.plg">
+]>
+<!-- TRANSITION FILE. Do not rename or delete; keep it at this path in this repository.
+     Trivy Scan is now CVE Lens (unraid-cve-lens.plg). An installed Trivy Scan finds out about updates by fetching its
+     own pluginURL, which is this path, so this file exists only to give old installs an "update" that installs CVE Lens.
+     It ships no package and no code of its own.
+     Rules that make it work (Unraid's `plugin` script):
+     - A plugin is identified by the file name it was installed under, not by name=, so this file keeps the old file
+       name and the old name. Its version must compare greater (string comparison) than the last real release of Trivy
+       Scan, 2026.11.03, or "Check for updates" never offers it.
+     - After the install script ends, `plugin update` copies this file back into place and re-registers the OLD
+       plugin, which would undo a `plugin remove` done inside the script. The old entry is therefore removed from a
+       detached job after a delay, once the plugin manager has finished.
+     - On a failed install of CVE Lens the script exits 1 and the old plugin stays as it was; the remove job is only
+       scheduled after a successful install.
+     CVE Lens's own install step moves the settings and the data folder (see scripts/migrate-from-trivy-scan). The
+     remove block below touches only pieces of the old plugin and never the migrated data. -->
+<PLUGIN name="&name;" author="CVE Lens project" version="&version;" min="7.0.0" icon="shield"
+        pluginURL="&pluginURL;" support="https://github.com/luuvasara/unraid-trivy-scan/issues">
+
+<CHANGES>
+###2026.11.04
+- Trivy Scan is now CVE Lens. Updating installs CVE Lens, copies your settings, schedule and ignore lists, moves the data folder (databases and last report) without downloading it again, and removes this entry about a minute later. See https://github.com/luuvasara/unraid-trivy-scan for details.
+</CHANGES>
+
+<FILE Run="/bin/bash">
+<INLINE>
+if [ -f /boot/config/plugins/unraid-cve-lens.plg ]; then
+  echo "CVE Lens is already installed."
+else
+  echo "Installing CVE Lens, the successor of Trivy Scan ..."
+  if ! plugin install &newURL;; then
+    echo "ERROR: CVE Lens could not be installed (see above). Trivy Scan was left unchanged; try again later."
+    exit 1
+  fi
+fi
+# The plugin manager registers this file as installed after the script ends, which would put the old entry back.
+# Remove it once that is done.
+nohup setsid bash -c 'sleep 45; plugin remove unraid-trivy-scan.plg' >/dev/null 2>&amp;1 &lt;/dev/null &amp;
+echo "Trivy Scan will be removed from the plugin list in about a minute; CVE Lens is its replacement."
+exit 0
+</INLINE>
+</FILE>
+
+<!-- Remove (runs when the old entry is removed): only the old plugin's own pieces. Deliberately NOT the old script's
+     "uninstall": with the setting "When the plugin is removed" on yes it deletes the data folder, which now belongs
+     to CVE Lens. The flash folder /boot/config/plugins/unraid-trivy-scan (settings copy) is left in place. -->
+<FILE Run="/bin/bash" Method="remove">
+<INLINE>
+for p in /var/log/packages/unraid-trivy-scan-*; do
+  [ -e "$p" ] &amp;&amp; removepkg "$(basename "$p")" >/dev/null 2>&amp;1
+done
+rm -rf /usr/local/emhttp/plugins/unraid-trivy-scan /var/run/unraid-trivy-scan
+rm -f /var/log/unraid-trivy-scan.log /boot/config/plugins/unraid-trivy-scan/unraid-trivy-scan-*-x86_64-1.txz
+rm -f /boot/config/plugins/unraid-trivy-scan/unraid-trivy-scan.cron
+[ -x /usr/local/sbin/update_cron ] &amp;&amp; /usr/local/sbin/update_cron
+echo "Trivy Scan removed. CVE Lens keeps working; your old settings copy stays in /boot/config/plugins/unraid-trivy-scan/."
+exit 0
+</INLINE>
+</FILE>
+
+</PLUGIN>

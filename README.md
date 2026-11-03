@@ -43,6 +43,31 @@ only refreshed when a newer build exists, about daily) or downloaded for every s
 shows each one's size (on disk now, at its last download, or an estimate). Default: all three are kept (the Grype
 database is a download of about 200 MB that unpacks to about 3.1 GB). See [Databases](#databases).
 
+<!-- keep-old-begin -->
+## Renamed from Trivy Scan
+
+CVE Lens was called Trivy Scan (`unraid-trivy-scan`) until 2026.11.03. The plugin checks more than Trivy's
+output now (the Unraid OS packages are matched with Grype), so the name changed. The GitHub repository keeps its
+old name for now, so the install URL above still contains `unraid-trivy-scan`.
+
+What happens when you press **Check for updates** and update the Trivy Scan entry:
+
+1. The old entry installs CVE Lens (`unraid-cve-lens.plg`) and, about a minute later, removes itself from the
+   plugin list. If CVE Lens cannot be installed, the old plugin is left unchanged and the update reports the error.
+2. CVE Lens copies your settings from `/boot/config/plugins/unraid-trivy-scan/` to
+   `/boot/config/plugins/unraid-cve-lens/` (the settings file, the schedule, `os-ignore.txt`, `cpe-map.txt`,
+   `ignore.txt`, whichever exist). The old folder stays where it is; its schedule file is renamed to
+   `unraid-trivy-scan.cron.migrated` so the old schedule does not run next to the new one.
+3. The data folder (databases, last report) is renamed from `<Docker appdata>/unraid-trivy-scan` to
+   `<Docker appdata>/unraid-cve-lens` with a plain rename, so nothing is downloaded again. If the array is stopped at
+   that moment, it is moved at the next boot or the next scan.
+4. A scan of the old plugin that is still running is stopped and its leftover containers are removed. For one
+   release CVE Lens also removes containers labelled `unraid-trivy-scan=1` when it cleans up.
+
+The settings page is now Settings, CVE Lens (`/Settings/CveLens`); the header tab is still "Vulnerabilities".
+You can also install CVE Lens directly and remove the old entry by hand; the same migration runs.
+<!-- keep-old-end -->
+
 ## Features
 
 - Scans the images of running containers, or of running and stopped containers. Images are scanned by image ID,
@@ -303,7 +328,7 @@ release files in `tests/e2e.sh`, so the number of findings it gives there is not
 
 ## Thanks
 
-Thanks to Xaero for the original cve-lens plugin on the Unraid forums, which this one is built on.
+Thanks to Xaero for the original trivy-scan plugin on the Unraid forums, which this one is built on.   <!-- keep-old-name -->
 
 ## License
 
