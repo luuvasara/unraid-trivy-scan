@@ -203,7 +203,7 @@ grep -qE '^trivy_now=[0-9]+$' <<<"$SZ" && grep -qE '^java_now=[0-9]+$' <<<"$SZ" 
   && ok "db-sizes: size on disk for present DBs, size at last download noted" || bad "db-sizes: $SZ"
 osrun 'OS_SCAN="no"' 'JAVA_DB="yes"' 'TRIVY_DB_KEEP="no"' 'JAVA_DB_KEEP="no"' && [ "$(sed -n 's/^result=//p' "$OSD/report/last-run")" = ok ] \
   && [ ! -e "$OSD/cache/db" ] && [ ! -e "$OSD/cache/java-db" ] && [ -d "$OSD/cache" ] \
-  && ok "TRIVY_DB_KEEP=no, JAVA_DB_KEEP=no: scan works, both deleted when it ends" || bad "unkept Trivy DBs: $(ls -R "$OSD/cache")"
+  && ok "TRIVY_DB_KEEP=no, JAVA_DB_KEEP=no: scan works, both deleted when it ends" || bad "unkept Trivy DBs: $(find "$OSD/cache" -maxdepth 3)"
 SZ=$(UTS_DATA=$OSD bash "$S" db-sizes)
 ! grep -q '^trivy_now' <<<"$SZ" && grep -qE '^trivy_last=[0-9]+$' <<<"$SZ" && grep -qE '^java_last=[0-9]+$' <<<"$SZ" \
   && ok "db-sizes: not on disk, last download size still reported" || bad "db-sizes after delete: $SZ"
@@ -244,7 +244,7 @@ grep -q -- "-v $GDB:/db anchore/grype:.* db update$" <<<"$GL" && ! grep -q 'dock
 osrun 'OS_SCAN="yes"' 'JAVA_DB="no"' 'OS_PKG_DB_KEEP="yes"'
 grep -- 'role=db' "$W/docker.log" | grep -q -- "-v $OSD/grype:/db anchore/grype" && grep -- 'role=pkgmatch' "$W/docker.log" | grep -q -- "-v $OSD/grype:/db:ro " \
   && [ -f "$OSD/grype/6/vulnerability.db" ] && [ ! -e "$OSD/grype/tmp" ] && [ ! -e "$GDB" ] \
-  && ok "OS_PKG_DB_KEEP=yes: DB downloaded into, kept in and mapped read-only from $OSD/grype" || bad "keep=yes: $(ls -R "$OSD" | head -20)"
+  && ok "OS_PKG_DB_KEEP=yes: DB downloaded into, kept in and mapped read-only from $OSD/grype" || bad "keep=yes: $(find "$OSD" -maxdepth 3 | head -20)"
 : >"$W/docker.log"
 UTS_CFG=$W/os.cfg UTS_DATA=$OSD UTS_RUN=$W/osrun UTS_LOG=$W/os.log UTS_PLUGIN_DIR=$P bash "$S" update-db --foreground
 grep -q 'anchore/grype.* db update' "$W/docker.log" && ok "update-db with OS_PKG_DB_KEEP=yes refreshes the kept Grype DB" || bad "update-db keep=yes: $(cat "$W/docker.log")"
