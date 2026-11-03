@@ -48,7 +48,7 @@ t(strpos($out, "base=rpm\n") !== false && strpos($out, "packages=4\n") !== false
 $r = []; foreach (rows("$p/inventory.tsv") as $x) $r[$x[0]] = $x;
 t(($r['openssl'] ?? [])[1] === '3.2.4' && $r['openssl'][2] === '3.fc42' && $r['openssl'][3] === 'openssl:openssl' && $r['openssl'][4] === 'rpm',
   "openssl-libs + openssl -> one 'openssl' row (source RPM name), version, release, mapping");
-t(($r['shadow-utils'] ?? [])[3] === 'shadow-utils_project:shadow-utils' && ($r['fedora-release'] ?? [])[3] === '', "Fedora source names mapped; release package unmapped");
+t(($r['shadow-utils'] ?? [])[3] === 'shadow-maint:shadow-utils' && ($r['fedora-release'] ?? [])[3] === '', "Fedora source names mapped; release package unmapped");
 $cmp = []; foreach (json_decode((string)file_get_contents("$p/os.cdx.json"), true)['components'] ?? [] as $c) $cmp[$c['name']] = $c;
 t(($cmp['openssh']['version'] ?? '') === '9.9p1' && ($cmp['openssh']['cpe'] ?? '') === 'cpe:2.3:a:openbsd:openssh:9.9p1:*:*:*:*:*:*:*', "RPM VERSION used as the upstream version (no epoch, no release)");
 $pt = file("$p/patched.tsv", FILE_IGNORE_NEW_LINES);
