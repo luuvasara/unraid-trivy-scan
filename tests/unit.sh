@@ -74,7 +74,7 @@ JAVA_DB=yes
 JAVA_DB_KEEP=yes
 NOTIFY=no
 OS_KERNEL_MATCH=no
-OS_PKG_DB_KEEP=no
+OS_PKG_DB_KEEP=yes
 OS_PKG_MATCH=yes
 OS_SCAN=yes
 REGISTRY_AUTH=no
@@ -221,20 +221,20 @@ php -r 'require $argv[1]; echo uts_db_size([], "java", "1.5 GB"), "\n";' "$P/inc
 
 # ---------------------------------------------------------------- OS packages against NVD CPEs (Grype)
 OSD=$W/osdata/unraid-trivy-scan
-GDB=$OSD/grype-run   # default OS_PKG_DB_KEEP=no: per-run DB
+GDB=$OSD/grype-run   # OS_PKG_DB_KEEP=no: per-run DB (the default is yes, like the Trivy databases)
 printf 'version="7.3.4"\n' >"$OR/etc/unraid-version"
-osrun 'OS_SCAN="yes"' 'JAVA_DB="no"' 'OS_PKG_MATCH="yes"'
+osrun 'OS_SCAN="yes"' 'JAVA_DB="no"' 'OS_PKG_MATCH="yes"' 'OS_PKG_DB_KEEP="no"'
 [ "$(osrep '$r["host"]["pkg_match"]." ".$r["host"]["pkg_error"]')" = "failed no OS package database (Grype DB download failed)" ] \
   && ! grep -q 'role=pkgmatch' "$W/docker.log" && ok "no Grype DB: no match container, the report says why" || bad "no Grype DB: $(osrep 'json_encode($r["host"])')"
 export FAKE_GRYPE_DB=1
 cp "$HERE/tests/fixtures/ospkg/os/pkgmatch.json" "$W/grype.json"
 printf 'CVE-2025-9002 samba # test\n' >"$W/os-ignore.txt"   # next to the settings file ($W/os.cfg)
-osrun 'OS_SCAN="yes"' 'JAVA_DB="no"' 'OS_PKG_MATCH="yes"' && ok "run with the OS package match exits 0" || bad "pkg run: $(tail -3 "$W/os.log")"
+osrun 'OS_SCAN="yes"' 'JAVA_DB="no"' 'OS_PKG_MATCH="yes"' 'OS_PKG_DB_KEEP="no"' && ok "run with the OS package match exits 0" || bad "pkg run: $(tail -3 "$W/os.log")"
 PL=$(grep -- '--label unraid-trivy-scan.role=pkgmatch' "$W/docker.log")
 [ "$(grep -c . <<<"$PL")" = 1 ] && grep -q -- "anchore/grype:v[0-9.]*@sha256:[0-9a-f]\{64\} sbom:/in/os.cdx.json -o json --by-cve -q$" <<<"$PL" \
   && ok "one match container: pinned Grype, sbom:/in/os.cdx.json, JSON" || bad "pkgmatch container: $PL"
-grep -q -- '--cap-drop ALL --security-opt no-new-privileges --network none --read-only' <<<"$PL" && ! grep -q 'docker.sock\|--mount' <<<"$PL" \
-  && ok "match container: no network, read-only, no socket, no host directories" || bad "pkgmatch hardening: $PL"
+grep -q -- "--cap-drop ALL --security-opt no-new-privileges --user $(id -u):$(id -g) --network none --read-only" <<<"$PL" && ! grep -q 'docker.sock\|--mount' <<<"$PL" \
+  && ok "match container: as the DB owner (Grype makes the DB dir mode 700), no network, read-only, no socket, no host directories" || bad "pkgmatch hardening: $PL"
 [ "$(grep -o -- ' -v [^ ]*' <<<"$PL" | sed 's/^ -v //' | sort | tr '\n' ' ')" = "$GDB:/db:ro $W/osdata/unraid-trivy-scan/work/os/os.cdx.json:/in/os.cdx.json:ro " ] \
   && ok "match container gets exactly the Grype DB (read-only) and the SBOM (read-only)" || bad "pkgmatch mounts: $(grep -o -- ' -v [^ ]*' <<<"$PL")"
 GL=$(grep -- 'role=db' "$W/docker.log" | grep 'anchore/grype')
@@ -248,15 +248,22 @@ grep -- 'role=db' "$W/docker.log" | grep -q -- "-v $OSD/grype:/db anchore/grype"
 : >"$W/docker.log"
 UTS_CFG=$W/os.cfg UTS_DATA=$OSD UTS_RUN=$W/osrun UTS_LOG=$W/os.log UTS_PLUGIN_DIR=$P bash "$S" update-db --foreground
 grep -q 'anchore/grype.* db update' "$W/docker.log" && ok "update-db with OS_PKG_DB_KEEP=yes refreshes the kept Grype DB" || bad "update-db keep=yes: $(cat "$W/docker.log")"
-printf '%s\n' 'OS_SCAN="yes"' 'JAVA_DB="no"' >"$W/os.cfg"; : >"$W/docker.log"
+printf '%s\n' 'OS_SCAN="yes"' 'JAVA_DB="no"' 'OS_PKG_DB_KEEP="no"' >"$W/os.cfg"; : >"$W/docker.log"
 UTS_CFG=$W/os.cfg UTS_DATA=$OSD UTS_RUN=$W/osrun UTS_LOG=$W/os.log UTS_PLUGIN_DIR=$P bash "$S" update-db --foreground
 ! grep -q 'anchore/grype' "$W/docker.log" && ok "update-db with OS_PKG_DB_KEEP=no skips Grype (nothing to keep)" || bad "update-db keep=no ran grype"
-osrun 'OS_SCAN="yes"' 'JAVA_DB="no"'
+osrun 'OS_SCAN="yes"' 'JAVA_DB="no"' 'OS_PKG_DB_KEEP="no"'
 [ ! -e "$OSD/grype" ] && [ ! -e "$GDB" ] && grep -q 'no longer kept' "$W/os.log" && ok "switching OS_PKG_DB_KEEP off deletes the kept DB at the next scan" || bad "kept DB not removed: $(ls "$OSD")"
-ln -s "$W/victim" "$OSD/grype-run"; osrun 'OS_SCAN="yes"' 'JAVA_DB="no"'
+ln -s "$W/victim" "$OSD/grype-run"; osrun 'OS_SCAN="yes"' 'JAVA_DB="no"' 'OS_PKG_DB_KEEP="no"'
 [ -e "$W/victim/keep" ] && [ ! -e "$W/victim/tmp" ] && [ ! -e "$W/victim/6" ] && ! grep -q 'role=pkgmatch' "$W/docker.log" \
   && ok "a symlink in place of the per-run DB dir is neither followed nor removed; match skipped" || bad "followed a grype-run symlink: $(ls "$W/victim")"
 rm -f "$OSD/grype-run"
+mkdir -p "$W/victim2/6"; echo x >"$W/victim2/6/vulnerability.db"; ln -s "$W/victim2" "$OSD/grype"
+osrun 'OS_SCAN="yes"' 'JAVA_DB="no"'   # default keep=yes, but the kept DB dir is a symlink
+! grep -q 'role=pkgmatch' "$W/docker.log" && [ "$(osrep '$r["host"]["pkg_match"]')" = failed ] && [ -e "$W/victim2/6/vulnerability.db" ] \
+  && ok "a symlink in place of the kept DB dir is not used either: no match container, report says failed" || bad "kept-DB symlink used: $(grep pkgmatch "$W/docker.log")"
+rm -f "$OSD/grype"
+osrun 'OS_SCAN="yes"' 'JAVA_DB="no"'   # defaults: match on, DB kept
+grep -- 'role=pkgmatch' "$W/docker.log" | grep -q -- "-v $OSD/grype:/db:ro " && ok "defaults: OS package match on, Grype DB kept in $OSD/grype" || bad "default grype DB: $(grep grype "$W/docker.log")"
 [ "$(osrep '$r["host"]["pkg_match"]." ".$r["host"]["base"]." ".$r["host"]["mapped_count"]')" = "ok slackware 1" ] && ok "report: match ok, Slackware, 1 package mapped (bash)" || bad "pkg report host: $(osrep 'json_encode($r["host"])')"
 [ "$(osrep 'implode(",", array_column($r["cves"], "id"))')" = "CVE-2025-9001,CVE-2025-9005,CVE-2025-9003,CVE-2025-9004" ] && ok "report: Grype CVEs on the OS target, os-ignore.txt next to the settings applied (9002 hidden)" || bad "pkg cves: $(osrep 'implode(",", array_column($r["cves"], "id"))')"
 php -r '$b=json_decode(file_get_contents($argv[1]),true); exit(array_column($b["components"],"name")===["bash"] ? 0 : 1);' "$W/last-sbom.json" \
@@ -327,7 +334,7 @@ php -r '$v=[]; for($i=0;$i<40000;$i++) $v[]=["VulnerabilityID"=>"CVE-2024-".(100
         file_put_contents($argv[1], json_encode(["SchemaVersion"=>2,"Results"=>[["Target"=>"t","Vulnerabilities"=>$v]]]));' "$W/big.json"
 FAKE_OS_JSON=$W/big.json UTS_AGG_MEMORY=16M osrun 'OS_SCAN="yes"' 'JAVA_DB="no"'
 [ "$(sed -n 's/^result=//p' "$OSD/report/last-run")" = failed ] && grep -q 'aggregate failed (exit 255):.*PHP fatal error: Allowed memory size' "$W/os.log" \
-  && [ -f "$OSD/work-failed/os/result" ] && grep -q "to retry the report: .*aggregate.php $OSD/work-failed" "$W/os.log" \
+  && [ -f "$OSD/work-failed/os/result" ] && grep -q "to retry the report: .*aggregate.php $OSD/work-failed $OSD/report/report.json scope=running registry=no trivy=[0-9.]*@sha256:[0-9a-f]* cache=$OSD/cache\$" "$W/os.log" \
   && ok "report step out of memory: reason logged, scan results kept in work-failed with a retry command" || bad "aggregate failure: $(tail -3 "$W/os.log")"
 FAKE_OS_JSON=$W/big.json osrun 'OS_SCAN="yes"' 'JAVA_DB="no"'
 [ ! -e "$OSD/work-failed" ] && grep -q 'report: cves=40000 .*peak_memory_mb=' "$W/os.log" && [ "$(sed -n 's/^result=//p' "$OSD/report/last-run")" = ok ] \

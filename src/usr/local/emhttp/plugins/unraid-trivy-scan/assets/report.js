@@ -31,7 +31,7 @@
   var TARGET_KINDS = ['all', 'os', 'images'];
 
   var state = { report: null, status: null, error: '', open: {},
-                f: { sev: SEVS.slice(), fix: 'fixable', target: 'all', q: '', sort: 'severity', dir: -1, page: 1, size: 50 } };
+                f: { sev: SEVS.slice(), fix: 'fixable', target: 'all', pkg: null, q: '', sort: 'severity', dir: -1, page: 1, size: 50 } };
   try {
     var saved = JSON.parse(localStorage.getItem('uts-filters') || 'null');
     if (saved && typeof saved === 'object') {
@@ -257,7 +257,7 @@
     var notes = /^[0-9]+\.[0-9]+\.[0-9]+$/.test(ver) ? 'https://docs.unraid.net/unraid-os/release-notes/' + ver + '/' : '';
     var open = /(?:^|[#&])packages(?:&|$)/.test(location.hash);
     var matched = str(h.pkg_match) === 'ok';
-    var baseName = str(h.base) === 'rpm' ? 'RPM' : 'Slackware';
+    var baseName = str(h.base) === 'rpm' ? 'RPM' : (str(h.base) === 'slackware' ? 'Slackware' : 'OS');
     var notesLink = notes ? [' (', el('a', { href: notes, target: '_blank', rel: 'noopener noreferrer' }, 'Unraid ' + ver), ')'] : null;
     var note;
     if (matched) {
@@ -345,7 +345,8 @@
    * report has the target filter (otherwise the search alone). */
   function showOsPackage(name, osN) {
     var f = state.f;
-    f.q = name; f.fix = 'all'; f.page = 1;
+    // exact: only this package's NVD matches on the OS target (a substring search would also hit titles and images)
+    f.q = name; f.fix = 'all'; f.page = 1; f.pkg = { img: osN, name: name };
     if ('target' in f) f.target = osN >= 0 ? 't' + osN : 'all';
     var qi = document.getElementById('uts-q'); if (qi) qi.value = name;
     var fs = document.getElementById('uts-fix'); if (fs) fs.value = 'all';
@@ -377,7 +378,10 @@
       if (f.fix === 'package' && fix !== 'package' && fix !== 'both') return false;
       if (f.fix === 'update' && fix !== 'update' && fix !== 'both') return false;
       if (f.fix === 'none' && fix !== 'none') return false;
-      if (q) {
+      if (f.pkg) {
+        if (!(Array.isArray(c.affected) ? c.affected : []).some(function (a) {
+          return a && num(a.img) === f.pkg.img && str(a.pkg) === f.pkg.name && str(a.source) === 'cpe'; })) return false;
+      } else if (q) {
         var hay = [str(c.id), str(c.title)];
         (Array.isArray(c.affected) ? c.affected : []).forEach(function (a) {
           hay.push(str(a.pkg)); hay.push(str(a.path)); hay.push(str(a.target));
@@ -430,11 +434,11 @@
       if (im && im.scan === 'ok') singles.push(el('option', { value: 't' + n, selected: f.target === 't' + n },
         (isOs(im) ? 'OS: ' : '') + (str(im.name) || '?') + containersText(im)));
     });
-    var targetSel = el('select', { id: 'uts-target', onchange: function (e) { f.target = e.target.value; f.page = 1; persist(); renderTable(); } },
+    var targetSel = el('select', { id: 'uts-target', onchange: function (e) { f.target = e.target.value; f.pkg = null; f.page = 1; persist(); renderTable(); } },
       kinds.map(function (o) { return el('option', { value: o[0], selected: f.target === o[0] }, o[1]); }),
       singles.length > 1 ? el('optgroup', { label: 'One target' }, singles) : null);
     var search = el('input', { type: 'search', id: 'uts-q', placeholder: 'CVE, package, image, path', value: f.q,
-      oninput: function (e) { f.q = e.target.value; f.page = 1; renderTable(); } });
+      oninput: function (e) { f.q = e.target.value; f.pkg = null; f.page = 1; renderTable(); } });
     var size = el('select', { id: 'uts-size', onchange: function (e) { f.size = +e.target.value; f.page = 1; persist(); renderTable(); } },
       [25, 50, 100].map(function (n) { return el('option', { value: n, selected: f.size === n }, n + ' per page'); }));
     return el('div', { className: 'uts-filters', role: 'group', 'aria-label': 'Filters' },

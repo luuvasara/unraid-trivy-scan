@@ -49,12 +49,19 @@ function read_map(string $f, array $map = []): array {
 /* CPE 2.3 formatted-string escaping for the version field: everything but [A-Za-z0-9._-] gets a backslash. */
 function cpe_esc(string $v): string { return preg_replace('/([^A-Za-z0-9._-])/', '\\\\$1', $v) ?? ''; }
 
-/* Upstream version as NVD writes it. Slackware uses "_" where upstream has "-" (e.g. 2.4_rc1); RPM VERSION is
- * already upstream. A trailing "+..." (Unraid/Slackware local suffix) is cut. */
+/* Upstream version as NVD writes it. RPM VERSION is already upstream. Slackware uses "_" where upstream has "-"
+ * for pre-releases (2.4_rc1 -> 2.4-rc1); any other "_suffix" is a snapshot/git marker (6.5_20241228,
+ * 20260508_3737842) and is cut, since "6.5-20241228" would compare as a pre-release LOWER than 6.5 and match CVEs
+ * fixed in 6.5. A trailing "+..." (local suffix) is cut, and so is a word prefix before the first digit
+ * (edk2's "stable202602" -> 202602; NVD writes 202311), which version comparison cannot read. */
 function upstream_version(string $v, string $base): string {
-  if ($base === 'slackware') $v = str_replace('_', '-', $v);
+  if ($base === 'slackware') {
+    $v = preg_replace('/_((?:rc|beta|alpha|pre)[0-9]*)(?=_|$)/i', '-$1', $v) ?? $v;
+    $v = preg_replace('/_.*$/', '', $v) ?? $v;
+  }
   $v = preg_replace('/\+.*$/', '', $v) ?? $v;
-  return ltrim($v, 'vV');
+  $v = preg_replace('/^[A-Za-z]+(?=[0-9])/', '', $v) ?? $v;
+  return $v;
 }
 
 [$self, $dir, $mapFile] = array_pad($argv, 3, null);

@@ -172,7 +172,7 @@ if (is_file("$work/os/result")) {
   $ver = s($kv['version'] ?? '', 40);
   if (!preg_match('/^[0-9A-Za-z.+_-]{1,40}$/', $ver)) $ver = 'unknown';
   $pkgRes = in_array($kv['pkg_result'] ?? '', ['ok', 'failed'], true) ? $kv['pkg_result'] : 'off';
-  $base = in_array($kv['pkg_base'] ?? '', ['slackware', 'rpm'], true) ? $kv['pkg_base'] : 'slackware';
+  $base = in_array($kv['pkg_base'] ?? '', ['slackware', 'rpm'], true) ? $kv['pkg_base'] : (is_file("$work/os/packages.txt") && filesize("$work/os/packages.txt") > 0 ? 'slackware' : 'unknown');
   $pk = []; $mapped = 0;
   if (is_file("$work/os/inventory.tsv")) {
     // written by include/osinventory.php: name, version, build, CPE vendor:product list, base
@@ -198,7 +198,7 @@ if (is_file("$work/os/result")) {
   if ($pkgRes === 'failed') $osWarn[] = 'OS package CVE match failed: ' . $host['pkg_error'];
   $osN = count($images);
   $ok = ($kv['result'] ?? '') === 'ok';
-  $baseName = $base === 'rpm' ? 'RPM-based (Fedora)' : 'Slackware-based';
+  $baseName = $base === 'rpm' ? 'RPM-based (Fedora)' : ($base === 'slackware' ? 'Slackware-based' : 'Package base not recognised');
   $images[] = ['kind' => 'os', 'id' => '', 'name' => $host['name'], 'ref' => '', 'stale' => false, 'containers' => [],
                'digests' => [], 'scan' => $ok ? 'ok' : 'failed', 'error' => $ok ? '' : (s($kv['error'] ?? '', 300) ?: 'no result'),
                'os' => $baseName . ($pkgRes === 'ok' ? " ($mapped OS packages matched against NVD)" : ' (OS packages not CVE-matched)'),
@@ -293,7 +293,12 @@ foreach ($osWarn as $w) $warnings[] = s($w, 300);
 
 // new fixable critical CVEs compared with the previous report
 $critNow = [];
-foreach ($cves as $c) if ($c['severity'] === 'CRITICAL' && $c['fix'] !== 'none') $critNow[$c['id']] = true;
+// NVD CPE matches of OS packages (source cpe) do not notify: the user cannot update those packages, and the fix may
+// already be backported into the same version; they are in the report
+foreach ($cves as $c) {
+  if ($c['severity'] !== 'CRITICAL' || $c['fix'] === 'none') continue;
+  foreach ($c['affected'] as $a) if (($a['source'] ?? '') !== 'cpe') { $critNow[$c['id']] = true; break; }
+}
 $prev = load_json($outFile);
 $critPrev = [];
 foreach ((is_array($prev['cves'] ?? null) ? $prev['cves'] : []) as $c) {
