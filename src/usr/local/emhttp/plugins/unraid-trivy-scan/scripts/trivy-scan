@@ -255,6 +255,10 @@ describe_image() {   # describe_image <id> <config image> -> DISPLAY REF STALE N
   DISPLAY=$(clean "$ci" 200)
   if [[ $ci == *@* ]] && [[ $last != *:* ]]; then
     NOREF="image is pinned by digest"
+  elif [ -z "$DIGESTS" ]; then
+    # never pulled from a registry (docker build / compose build): there is nothing to compare with, and asking
+    # Docker Hub for e.g. library/myapp-web only gives "authentication required"
+    NOREF="image was built locally (no registry digest)"
   elif [[ $last == *:* ]]; then REF=$name
   else REF="$name:latest"; fi
   tagid=$(docker image inspect -f '{{.Id}}' "$ci" 9>&- 2>/dev/null)
