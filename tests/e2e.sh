@@ -178,4 +178,17 @@ flock -n "$UTS_RUN/lock" true && ok "lock released after stop" || bad "lock stil
 bash "$S" update-db --foreground && ok "update-db: ok" || bad "update-db"
 [ "$(runs_with 'download-db-only')" = 1 ] && [ "$(runs_with 'image-src')" = 0 ] && ok "update-db ran only the DB container, no scan" || bad "update-db containers"
 [ "$G1" -le "$(report '$r["generated"]')" ] && ok "report still readable after all runs" || bad "report"
+
+# ---------------------------------------------------------------- 6: a locally built image is not sent to the registry check
+# A compose/docker-build image has no RepoDigests; asking Docker Hub for library/<name> only gave "authentication required".
+printf 'FROM alpine:3.10\n' | "$D" build -q -t uts-e2e-local:1 - >/dev/null && ADDED+=(uts-e2e-local:1)
+"$D" run -d "${L[@]}" --name uts-e2e-local uts-e2e-local:1 sleep 3600 >/dev/null
+cfg 'SCOPE="running"' 'REGISTRY_CHECK="yes"' 'JAVA_DB="no"' 'NOTIFY="no"' 'OS_SCAN="no"'; : >"$W/docker.log"
+bash "$S" run || bad "scan 6 rc=$?"
+LOC=$(report 'implode("|", array_map(fn($i)=>$i["update"].":".$i["update_note"], array_filter($r["images"], fn($i)=>$i["name"]==="uts-e2e-local:1")))')
+[ "$LOC" = "skipped:image was built locally (no registry digest)" ] && ! grep '^run ' "$W/docker.log" | grep 'role=remote' | grep -q 'uts-e2e-local' \
+  && ok "locally built image: registry check skipped with the reason, no registry container for it" || bad "local image: '$LOC'"
+grep -q 'nginx:1.19-alpine=current' <<<"$(report 'implode(",", array_map(fn($i)=>$i["name"]."=".$i["update"], $r["images"]))')" \
+  && ok "pulled images are still registry-checked next to it" || bad "registry check of pulled images: $(report 'json_encode(array_column($r["images"], "update", "name"))')"
+"$D" rm -f uts-e2e-local >/dev/null
 exit $fail
