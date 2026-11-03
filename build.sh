@@ -17,7 +17,11 @@ PKG=$OUT/$NAME-$VER-x86_64-1.txz
 P=usr/local/emhttp/plugins/$NAME
 ST=$(mktemp -d "$HERE/.build.XXXXXX"); trap 'rm -rf "$ST"' EXIT
 chmod 755 "$ST"
-cp -a "$HERE/src/." "$ST/"
+# only what git tracks under src/: a merge or rename can leave empty or untracked directories in the work tree,
+# and cp -a would ship them (an empty plugins/<old name>/ tree once did)
+UNTRACKED=$(git -C "$HERE" ls-files --others --exclude-standard -- src)
+[ -z "$UNTRACKED" ] || { echo "FATAL: untracked files under src/ (git add or remove them):"; echo "$UNTRACKED"; exit 1; }
+(cd "$HERE/src" && git ls-files -z --cached -- . | xargs -0 cp -a --parents -t "$ST/")
 find "$ST" -type d -exec chmod 755 {} +
 find "$ST" -type f -exec chmod 644 {} +
 chmod 755 "$ST/$P/scripts/cve-lens" "$ST/$P/scripts/migrate-from-trivy-scan" "$ST/$P/event/stopping_docker"   # emhttp_event runs only executable event files

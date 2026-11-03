@@ -13,12 +13,21 @@ fail=0; ok() { echo "ok   $*"; }; bad() { echo "FAIL $*"; fail=1; }
 
 cat >"$W/bin/docker" <<EOF
 #!/bin/sh
-echo "docker \$*" >>"$W/docker.log"
-case "\$1" in ps) exit 0 ;; info) exit 0 ;; esac
+echo "docker \$*" | tr '\n' ' ' | sed 's/ $//' >>"$W/docker.log"; echo >>"$W/docker.log"
+case "\$1" in ps) [ -n "\${FAKE_PS:-}" ] && echo "\$FAKE_PS"; exit 0 ;; info) exit 0 ;; esac
+case "\$1" in inspect) case " \$* " in
+  *HostConfig.Privileged*) cat "$W/posture.out"; exit 0 ;;
+  *" image "*) ;;
+  *) [ -n "\${FAKE_PS:-}" ] && printf 'cid\\037sha256:%s\\037web:latest\\037/web\\037\\n' "\$FAKE_IMG"; exit 0 ;; esac ;; esac
 case " \$* " in *" rootfs "*) [ -n "\${FAKE_OS_JSON:-}" ] && [ -z "\${FAKE_OS_FAIL:-}" ] && { cat "\$FAKE_OS_JSON"; exit 0; } ;; esac   # a large Trivy result
 case " \$* " in *" rootfs "*) [ -n "\${FAKE_OS_FAIL:-}" ] && { echo "FATAL fake failure" >&2; exit 1; }; echo '{"SchemaVersion":2,"Results":[]}' ;; esac
 case " \$* " in *" db update "*)   # Grype DB download: with FAKE_GRYPE_DB=1, leave a DB in the directory mounted at /db
   [ -n "\${FAKE_GRYPE_DB:-}" ] && for a in "\$@"; do case "\$a" in *:/db) mkdir -p "\${a%:/db}/6" && echo x >"\${a%:/db}/6/vulnerability.db" ;; esac; done ;; esac
+case " \$* " in *" --entrypoint sh "*)   # exploit data download: with FAKE_EXPLOIT=<dir>, leave the files in the directory mounted at /x
+  d=; for a in "\$@"; do case "\$a" in *:/x) d="\${a%:/x}" ;; esac; done
+  [ -n "\${FAKE_EXPLOIT:-}" ] && [ -n "\$d" ] && { cp "\$FAKE_EXPLOIT/kev.json" "\$d/kev.json.new"; cp "\$FAKE_EXPLOIT/epss.csv.gz" "\$d/epss.csv.gz.new"; }
+  [ -n "\${FAKE_EXPLOIT_BAD:-}" ] && [ -n "\$d" ] && { echo "not json" >"\$d/kev.json.new"; echo "not gzip" >"\$d/epss.csv.gz.new"; }
+  [ -n "\${FAKE_EXPLOIT_BIG:-}" ] && [ -n "\$d" ] && { cp "\$FAKE_EXPLOIT/kev.json" "\$d/kev.json.new"; truncate -s 52428801 "\$d/kev.json.new"; } ;; esac
 case " \$* " in *" sbom:/in/os.cdx.json "*)
   for a in "\$@"; do case "\$a" in *:/in/os.cdx.json:ro) cp "\${a%:/in/os.cdx.json:ro}" "$W/last-sbom.json" ;; esac; done
   [ -n "\${FAKE_GRYPE_FAIL:-}" ] && { echo "ERROR fake grype failure" >&2; exit 1; }
@@ -70,6 +79,7 @@ printf '%s\r\n' 'SCHEDULE="$(touch PWN2)"' 'SCOPE=all; touch PWN3' 'TIMEOUT="060
 printf '%s\n' '* * * * * touch /PWN4' >>"$W/h.cfg"
 OUT=$(UTS_CFG=$W/h.cfg bash "$S" config)
 want='DASH_TILE=yes
+EXPLOIT_DATA=yes
 JAVA_DB=yes
 JAVA_DB_KEEP=yes
 NOTIFY=no
@@ -277,6 +287,34 @@ FAKE_GRYPE_FAIL=1 osrun 'OS_SCAN="yes"' 'JAVA_DB="no"'
 osrun 'OS_SCAN="yes"' 'JAVA_DB="no"' 'OS_PKG_MATCH="no"'
 ! grep -q 'role=pkgmatch\|anchore/grype' "$W/docker.log" && [ "$(osrep '$r["host"]["pkg_match"]')" = off ] \
   && ok "OS_PKG_MATCH=no: no Grype pull, download or container; match off" || bad "OS_PKG_MATCH=no: $(grep grype "$W/docker.log")"
+# exploit data (CISA KEV, FIRST EPSS): the download is a "db" container with network, no Docker socket and only its own directory
+XF=$HERE/tests/fixtures/exploit
+FAKE_EXPLOIT=$XF osrun 'OS_SCAN="no"' 'JAVA_DB="no"'
+XL=$(grep -- '-exploit ' "$W/docker.log")
+[ "$(grep -c . <<<"$XL")" = 1 ] && grep -q -- '--label unraid-cve-lens.role=db ' <<<"$XL" && grep -q -- '--cap-drop ALL --security-opt no-new-privileges' <<<"$XL" \
+  && ! grep -q 'docker.sock\|--network\|--privileged\|--pid\|--mount' <<<"$XL" && [ "$(grep -o -- ' -v ' <<<"$XL" | wc -l)" = 1 ] \
+  && grep -q -- "-v $OSD/exploit:/x " <<<"$XL" && grep -q -- '--read-only' <<<"$XL" && grep -qE -- 'aquasec/trivy:[0-9.]+@sha256:[0-9a-f]{64} ' <<<"$XL" \
+  && grep -q 'https://www.cisa.gov/sites/default/files/feeds/known_exploited_vulnerabilities.json' <<<"$XL" && grep -q 'https://epss.empiricalsecurity.com' <<<"$XL" \
+  && ok "exploit data download: db role, network (default bridge), no Docker socket, only $OSD/exploit mounted, read-only, pinned Trivy image" || bad "exploit container: $XL"
+[ -s "$OSD/exploit/kev.json" ] && [ -s "$OSD/exploit/epss.csv.gz" ] && [ ! -e "$OSD/exploit/kev.json.new" ] && [ ! -e "$OSD/exploit/epss.csv.gz.new" ] \
+  && ok "exploit data: valid downloads kept in $OSD/exploit, no temporary files left" || bad "exploit files: $(ls -la "$OSD/exploit")"
+cp "$OSD/exploit/kev.json" "$W/kev.good"
+FAKE_EXPLOIT_BAD=1 osrun 'OS_SCAN="no"' 'JAVA_DB="no"'
+cmp -s "$OSD/exploit/kev.json" "$W/kev.good" && [ ! -e "$OSD/exploit/kev.json.new" ] && gzip -t "$OSD/exploit/epss.csv.gz" && grep -q 'keeping the previous copy' "$W/os.log" \
+  && ok "exploit data: an invalid download is refused, the last good copy stays, with a warning" || bad "bad exploit download replaced the good copy: $(tail -3 "$W/os.log")"
+FAKE_EXPLOIT=$XF FAKE_EXPLOIT_BIG=1 osrun 'OS_SCAN="no"' 'JAVA_DB="no"'
+cmp -s "$OSD/exploit/kev.json" "$W/kev.good" && [ ! -e "$OSD/exploit/kev.json.new" ] && ok "exploit data: a download over 50 MiB is refused, the last good copy stays" || bad "oversize exploit file accepted"
+SZ=$(UTS_DATA=$OSD bash "$S" db-sizes)
+grep -qE '^exploit_now=[0-9]+$' <<<"$SZ" && grep -qE '^exploit_last=[0-9]+$' <<<"$SZ" && ok "db-sizes reports the exploit data (now and last)" || bad "db-sizes exploit: $SZ"
+: >"$W/docker.log"; printf '%s\n' 'OS_SCAN="no"' 'JAVA_DB="no"' >"$W/os.cfg"
+FAKE_EXPLOIT=$XF UTS_CFG=$W/os.cfg UTS_DATA=$OSD UTS_RUN=$W/osrun UTS_LOG=$W/os.log UTS_PLUGIN_DIR=$P bash "$S" update-db --foreground
+grep -q -- '-exploit ' "$W/docker.log" && ok "update-db refreshes the exploit data" || bad "update-db skipped exploit data"
+osrun 'OS_SCAN="no"' 'JAVA_DB="no"' 'EXPLOIT_DATA="no"'
+! grep -q -- '-exploit ' "$W/docker.log" && [ ! -e "$OSD/exploit" ] && ok "EXPLOIT_DATA=no: no download container, the kept files are removed" || bad "EXPLOIT_DATA=no: $(ls "$OSD"; grep exploit "$W/docker.log")"
+mkdir -p "$W/victim3"; touch "$W/victim3/keep"; ln -s "$W/victim3" "$OSD/exploit"
+FAKE_EXPLOIT=$XF osrun 'OS_SCAN="no"' 'JAVA_DB="no"'
+[ -e "$W/victim3/keep" ] && [ ! -e "$W/victim3/kev.json" ] && ! grep -q -- '-exploit ' "$W/docker.log" && ok "a symlink in place of the exploit directory is not followed" || bad "followed an exploit symlink: $(ls "$W/victim3")"
+rm -f "$OSD/exploit"
 # RPM base (Unraid 8 / Fedora): no pkgtools, an RPM database and rpm(8)
 rm -rf "$OR/var/lib/pkgtools"; mkdir -p "$OR/usr/lib/sysimage/rpm"
 printf '#!/bin/sh\necho "rpm $*" >>%s/rpm.log\ncase "$*" in *CHANGELOGTEXT*) cat %s ;; *) cat %s ;; esac\n' "$W" \
@@ -360,6 +398,8 @@ INST=$(php -r '$d=new DOMDocument(); $d->substituteEntities=true; $d->load($argv
 REM=$(php -r '$d=new DOMDocument(); $d->load($argv[1], LIBXML_NOENT); foreach ($d->getElementsByTagName("FILE") as $f) if ($f->getAttribute("Method")==="remove") foreach ($f->getElementsByTagName("INLINE") as $i) echo $i->textContent;' "$PLG")
 grep -Eq 'cve-lens (start|run|cron|update-db)|docker (pull|run)' <<<"$INST" && bad "install/boot block starts a scan or a download" || ok "install/boot blocks never scan or download"
 grep -q 'cve-lens stop' <<<"$INST" && grep -q 'cve-lens apply' <<<"$INST" && ok "pre-install stops a running scan, post-install only applies cron" || bad "install block stop/apply"
+grep -Fq "[ ! -e /var/log/plugins/unraid-cve-lens.plg ]; then" <<<"$INST" && grep -Fq "nohup setsid bash -c 'sleep 15; /usr/local/sbin/update_cron' >/dev/null 2>&1 </dev/null &" <<<"$INST" \
+  && ok "post-install re-reads the cron entry once the plugin is registered (detached, delayed)" || bad "post-install: no delayed update_cron"
 grep -q 'cve-lens uninstall' <<<"$REM" && ok "remove block runs uninstall (stop, cron, optional cleanup)" || bad "remove block"
 grep -q 'case $f in \*/unraid-cve-lens-2026[^)]*-x86_64-1.txz) ;;' <<<"$INST" && ok "old-package cleanup keeps the version being installed" || bad "package cleanup not version-preserving"
 grep -q 'pluginURL="&pluginURL;"' "$PLG" && grep -q '<!ENTITY gitURL    "https://raw.githubusercontent.com/luuvasara/unraid-trivy-scan/main">' "$PLG" \
@@ -377,9 +417,31 @@ grep -q '^-rwxr-xr-x 0/0 .* ./usr/local/emhttp/plugins/unraid-cve-lens/event/sto
   && ok "package ships event/stopping_docker as -rwxr-xr-x root/root" || bad "package lacks an executable event/stopping_docker: $(tar -tJvf "$PKG" | grep event)"
 grep -c 'TRIVY_IMAGE=' "$S" | grep -qx 1 && ! grep -rq 'aquasec/trivy:' "$P" --include=*.php --include=*.page && ok "the Trivy image is named in exactly one place" || bad "Trivy image named in more than one place"
 
+# ---------------------------------------------------------------- container risk: what the host script asks docker for
+IMGID=$(printf 'e%.0s' $(seq 64))
+python3 -I - "$W/posture.out" "$IMGID" <<'PY'
+import json, sys
+img = "sha256:" + sys.argv[2]
+rows = [
+  ["cid1", img, "/web", True, "host", "host", ["SYS_ADMIN"], [{"PathOnHost": "/dev/dri"}], "", "CMD", None, ["/var/run/docker.sock"], {"80/tcp": [{"HostIp": "", "HostPort": "8080"}]}, False, "web:latest"],
+  ["cid2", img, "/quiet", False, "bridge", "", None, None, "1000:1000", None, ["/mnt/user/x:/x:rw"], [], {"22/tcp": [{"HostIp": "127.0.0.1", "HostPort": "2222"}]}, False, "web@sha256:" + "a" * 64],
+  ["cid3", img, "/ours", False, "bridge", "", None, None, "", None, None, [], {}, True, "aquasec/trivy"],
+]
+open(sys.argv[1], "w").write("\n".join(json.dumps(r) for r in rows) + "\n")
+PY
+FAKE_PS=cid FAKE_IMG=$IMGID osrun 'OS_SCAN="no"' 'JAVA_DB="no"' && ok "run with containers (fake docker) exits 0" || bad "posture run rc=$?: $(tail -3 "$W/os.log")"
+PIN=$(grep 'HostConfig.Privileged' "$W/docker.log")
+[ -n "$PIN" ] && ! grep -qE '\.Env|\.Cmd|\.Args|Entrypoint' <<<"$PIN" && ok "posture inspect names its fields and never asks for Env, Cmd, Entrypoint or the whole label set" || bad "posture inspect format: $PIN"
+[ "$(osrep 'json_encode(array_column($r["posture"], "container"))')" = '["quiet","web"]' ] \
+  && ok "report.posture: our own container left out, two containers listed" || bad "report posture: $(osrep 'json_encode($r["posture"])')"
+[ "$(osrep 'json_encode([$r["posture"][1]["privileged"], $r["posture"][1]["socket"], $r["posture"][1]["ports"], $r["posture"][1]["latest"], $r["posture"][0]["ports"], $r["posture"][0]["latest"], $r["posture"][0]["image_idx"]], JSON_UNESCAPED_SLASHES)')" = '[true,true,["8080/tcp"],true,[],false,0]' ] \
+  && ok "report.posture: flags and ports through the real script (loopback port and digest-pinned image not flagged)" || bad "posture flags: $(osrep 'json_encode($r["posture"])')"
+
 # ---------------------------------------------------------------- aggregate on fixture Trivy JSON
 php "$HERE/tests/aggregate-test.php" "$HERE" || fail=1
+command -v node >/dev/null && { node "$HERE/tests/export-test.js" || fail=1; } || echo "FAIL node not found: CSV export test not run"
 php "$HERE/tests/osinventory-test.php" "$HERE" || fail=1
+php "$HERE/tests/ignore-test.php" "$HERE" || fail=1
 grep -c 'GRYPE_IMAGE=' "$S" | grep -qx 1 && ! grep -rq 'anchore/grype:' "$P" --include=*.php --include=*.page && ok "the Grype image is named in exactly one place" || bad "Grype image named in more than one place"
 
 # Every literal status message must survive clean() (scripts/cve-lens), which turns any other character into '?':

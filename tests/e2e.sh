@@ -102,6 +102,9 @@ cfg 'SCOPE="all"' 'REGISTRY_CHECK="yes"' 'REGISTRY_AUTH="yes"' 'JAVA_DB="no"' 'N
 bash "$S" run || bad "scan 2 rc=$?: $(tail -5 "$W/scan.log")"
 [ "$(report '$r["summary"]["images"]')" = 3 ] && grep -q 'uts-e2e-stopped' <<<"$(report 'json_encode($r["images"])')" \
   && ok "scope=all: stopped container listed (shares the alpine:3.10 image with byid)" || bad "scope=all: $(report 'json_encode(array_map(fn($i)=>[$i["name"],$i["containers"]], $r["images"]))')"
+# container risk: one row per container, also for images without a HEALTHCHECK (a missing key once aborted docker inspect)
+POST=$(report 'implode(",", array_map(fn($p)=>$p["container"], $r["posture"]))')
+[ "$(tr ',' '\n' <<<"$POST" | grep -c '^uts-e2e-')" = 4 ] && ok "container risk lists all 4 containers: $POST" || bad "container risk rows: '$POST'"
 UPD=$(report 'implode(",", array_map(fn($i)=>$i["name"]."=".$i["update"], $r["images"]))')
 grep -q 'nginx:1.19-alpine=current' <<<"$UPD" && grep -q 'alpine:3.19=newer' <<<"$UPD" && grep -q "image ${ID310:7:12}=skipped" <<<"$UPD" \
   && ok "registry states: $UPD" || bad "registry states: $UPD ($(report 'json_encode(array_map(fn($i)=>$i["update_note"], $r["images"]))'))"

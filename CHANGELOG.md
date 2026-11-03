@@ -1,7 +1,17 @@
 # Changelog
 
-Copied by build.sh from the <CHANGES> block of unraid-trivy-scan.plg; edit the .plg, not this file.
+Copied by build.sh from the <CHANGES> block of unraid-cve-lens.plg; edit the .plg, not this file.
 
+## 2026.11.04
+- Renamed: Trivy Scan is now CVE Lens (the plugin checks container images and the Unraid OS with more than Trivy). The header tab is still "Vulnerabilities"; the settings page is Settings, CVE Lens.
+- Updating from Trivy Scan: "Check for updates" on the old entry installs CVE Lens and then removes the old entry, a minute later. Your settings, schedule and ignore lists are copied; the data folder (the vulnerability databases and the last report) is moved, not downloaded again, to the Docker appdata folder, as unraid-cve-lens. If the array is stopped at that moment, it is moved at the next boot or scan. The old folder on the flash drive is left in place.
+- A scan of the old plugin that is still running is stopped, and its leftover containers are removed.
+- Bookmarks to /Settings/TrivyScan need updating to /Settings/CveLens.
+- New: exploit data per CVE. A "Known exploited" badge for CVEs on CISA's Known Exploited Vulnerabilities list, an EPSS column (estimated chance of exploitation in the next 30 days), a filter "Exploited / likely" and a count in the summary. A CVE that newly appears on the list and affects a container image triggers a notification. Two small files (about 5 MB), downloaded with the databases by the existing download container; Settings, "Exploit data" turns it off.
+- New: images whose base OS release is end of life get an "End of life base" badge: that release gets no more fixes, so findings may show "no fix" for that reason.
+- New: ignore list. "Ignore..." in an expanded CVE row hides a finding for all images, one image or the OS, with a reason and an optional expiry date; "Stop ignoring" in the Ignored list brings it back. Ignored findings are left out of the counts and notifications; an expired entry is listed and its findings count again. The list is ignore.txt next to the settings file and can also be edited by hand.
+- New: Container risk, a collapsed table with the settings of each scanned container that matter for security (privileged, Docker socket, host network or PID, added capabilities, devices, runs as root, ports on all interfaces, no healthcheck, :latest). Only these settings are read; environment values and command lines never are.
+- New: export the report, or the current filtered view, as CSV or JSON; the CVEs that are new or gone since the last scan; a small trend line over the last scans (kept in history.jsonl, last 90 scans).
 ## 2026.11.03
 - New (Xaero): the Unraid OS's own packages are now checked for CVEs. Trivy has no advisory data for Slackware (or for the Fedora base of Unraid 8), so the package list is mapped to NVD product names and matched by upstream version with a pinned Grype image, in a container without network, without the Docker socket and with nothing of the host but that list. Settings, Unraid OS: "Match OS packages against NVD" (on) and "Include the kernel" (off). NVD only knows upstream versions, so a fix Lime Tech backported can still show up: check findings against the release notes; os-ignore.txt next to the settings file hides a CVE.
 - NVD entries that give no version range (they list every version as affected) and disputed entries are listed as "not counted" with the reason instead of as findings. On the 7.3.4 release files that leaves 73 CVEs of 160 raw matches. OS package matches never trigger the "new fixable critical" notification.

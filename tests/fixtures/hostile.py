@@ -45,3 +45,7 @@ open(out + '/cfg', 'w').write('SCHEDULE="' + P[1] + mark('cfg') + '"\nSCOPE="all
 open(out + '/run/progress', 'w').write('phase=scan\ndone=1\ntotal=2\ncurrent=' + P[0] + mark('current') + '\n')
 open(out + '/data/report/last-run', 'w').write('result=failed\nended=1767225600\nmessage=' + P[2] + mark('lastrun') + '\n')
 open(out + '/varini', 'w').write('csrf_token="0123456789ABCDEF"\n')
+
+open(out + '/work/posture.jsonl', 'w').write(json.dumps(
+    ['a' * 64, 'sha256:' + 'e' * 64, '/' + P[1] + mark('pname'), True, 'host', 'host', ['SYS_ADMIN', P[0]], [{}], '', 'CMD',
+     ['/var/run/docker.sock:/x'], [], {'80/tcp': [{'HostIp': '', 'HostPort': '8080'}]}, False, P[2] + ':latest']) + '\n')

@@ -14,6 +14,8 @@ if (preg_match('~^/plugins/unraid-cve-lens/include/(status|report|action)\.php$~
   return true;
 }
 if (strpos($uri, '/plugins/') === 0 || strpos($uri, '/webGui/') === 0) return false;   // static files
+// the pages show the data directory; screenshots go into docs/, so show the default location, not this checkout's path
+if (($dataDir = getenv('UTS_DATA')) !== false && $dataDir !== '') ob_start(fn($o) => str_replace($dataDir, '/mnt/user/appdata/unraid-cve-lens', $o));
 
 $docroot = $webroot;
 $var = @parse_ini_file(getenv('UTS_VARINI')) ?: [];
