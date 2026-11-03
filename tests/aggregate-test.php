@@ -107,8 +107,10 @@ t(($c['CVE-2025-9004']['severity'] ?? '') === 'LOW' && ($c['CVE-2025-9004']['url
   "GHSA id -> related CVE id; Negligible -> LOW; javascript: URL skipped for the next https one");
 t(!isset($c['CVE-2025-9003']) && !isset($c['CVE-2025-9005']), "os-ignore.txt entry and RPM-changelog backport are hidden");
 $sup = []; foreach ($h['suppressed'] ?? [] as $x) $sup[$x[0]] = $x;
-t(($h['suppressed_count'] ?? 0) === 2 && strpos($sup['CVE-2025-9003'][2] ?? '', 'os-ignore.txt: fixed by Lime Tech') === 0
+t(($h['suppressed_count'] ?? 0) === 4 && strpos($sup['CVE-2025-9003'][2] ?? '', 'os-ignore.txt: fixed by Lime Tech') === 0
   && ($sup['CVE-2025-9005'][1] ?? '') === 'bash' && strpos($sup['CVE-2025-9005'][2] ?? '', 'changelog') !== false, "hidden matches listed with the reason");
+t(($sup['CVE-2025-9006'][2] ?? '') === 'NVD gives no version range (lists every version as affected)' && ($sup['CVE-2025-9007'][2] ?? '') === 'disputed (NVD)'
+  && !isset($c['CVE-2025-9006']) && !isset($c['CVE-2025-9007']), "'none (unknown)' constraint and ** DISPUTED ** matches are suppressed, not findings");
 t(($r['summary']['invalid_entries'] ?? -1) === 2, "malformed Grype matches counted, not reported");
 t(($r['grype'] ?? '') === 'v0.121.0@sha256:0123', "Grype version (from os/result) in the report");
 t(($h['pkg_match'] ?? '') === 'ok' && ($h['mapped_count'] ?? 0) === 3 && ($h['package_count'] ?? 0) === 5 && ($h['grype_db'] ?? '') === '2026-11-01T04:12:00Z',
@@ -125,4 +127,100 @@ run($agg, $g, "$w/ospkgbad.json");
 $rb = json_decode((string)file_get_contents("$w/ospkgbad.json"), true);
 t(($rb['host']['pkg_match'] ?? '') === 'failed' && in_array('OS package CVE match failed: Grype output is not valid JSON', $rb['warnings'] ?? [], true),
   "invalid Grype JSON -> match failed, warning in the report");
+
+// ---- notification rule: OS CPE matches (source cpe) do not count as new fixable critical
+function nfc(string $agg, string $dir, string $out): string {
+  @unlink($out);
+  return run($agg, $dir, $out);
+}
+function critwork(string $d, bool $withImage): void {
+  @mkdir("$d/os", 0755, true); @mkdir("$d/local", 0755, true);
+  file_put_contents("$d/warnings.txt", '');
+  file_put_contents("$d/os/result", "result=ok\nversion=7.3.4\npkg_result=ok\npkg_base=slackware\n");
+  file_put_contents("$d/os/os.json", '{"SchemaVersion":2,"Results":[]}');
+  file_put_contents("$d/os/inventory.tsv", "openssl\t3.5.4\t1\topenssl:openssl\tslackware\n");
+  file_put_contents("$d/os/pkgmatch.json", json_encode(['matches' => [['vulnerability' => ['id' => 'CVE-2025-7001', 'severity' => 'Critical',
+    'description' => 'x', 'fix' => ['versions' => ['3.5.5'], 'state' => 'fixed']], 'matchDetails' => [['searchedBy' => ['cpes' => ['cpe:2.3:a:openssl:openssl:3.5.4:*:*:*:*:*:*:*']], 'found' => ['versionConstraint' => '< 3.5.5']]],
+    'artifact' => ['name' => 'openssl', 'version' => '3.5.4']]], 'descriptor' => ['db' => ['status' => ['built' => '2026-11-01T00:00:00Z']]]]));
+  if ($withImage) {
+    file_put_contents("$d/images.tsv", "1\tsha256:" . str_repeat('a', 64) . "\texample/app:1\texample/app:1\t0\t\tapp\t\n");
+    file_put_contents("$d/results.tsv", "1\tlocal\tok\t\n");
+    file_put_contents("$d/local/1.json", json_encode(['SchemaVersion' => 2, 'Results' => [['Target' => 't', 'Class' => 'os-pkgs', 'Type' => 'alpine', 'Vulnerabilities' => [
+      ['VulnerabilityID' => 'CVE-2025-7001', 'PkgName' => 'libssl3', 'InstalledVersion' => '3.5.4', 'FixedVersion' => '3.5.5', 'Status' => 'fixed', 'Severity' => 'CRITICAL', 'Title' => 'x']]]]]));
+  } else { file_put_contents("$d/images.tsv", ''); file_put_contents("$d/results.tsv", ''); }
+}
+$cw = "$w/crit-cpe"; critwork($cw, false);
+$o = nfc($agg, $cw, "$w/crit-cpe.json");
+$rc = json_decode((string)file_get_contents("$w/crit-cpe.json"), true);
+t(($rc['cves'][0]['severity'] ?? '') === 'CRITICAL' && ($rc['cves'][0]['fix'] ?? '') === 'package' && ($rc['cves'][0]['affected'][0]['source'] ?? '') === 'cpe'
+  && strpos($o, 'new_fixable_critical=0') !== false && ($rc['new_fixable_critical'] ?? -1) === 0,
+  "fixable CRITICAL found only by the OS CPE match (source cpe) -> not a new fixable critical");
+$cw = "$w/crit-both"; critwork($cw, true);
+$o = nfc($agg, $cw, "$w/crit-both.json");
+$rc = json_decode((string)file_get_contents("$w/crit-both.json"), true);
+$srcs = array_column($rc['cves'][0]['affected'] ?? [], 'source'); sort($srcs);
+t(count($rc['cves'] ?? []) === 1 && count($srcs) === 2 && $srcs[0] === 'cpe' && $srcs[1] === 'trivy' && strpos($o, 'new_fixable_critical=1') !== false,
+  "the same CRITICAL also found in a container image (source trivy) -> counted as new fixable critical");
+
+// ---- OS package base fallback when os/result has no pkg_base
+$bw = "$w/base-slack"; @mkdir("$bw/os", 0755, true);
+file_put_contents("$bw/images.tsv", ''); file_put_contents("$bw/results.tsv", '');
+file_put_contents("$bw/os/result", "result=ok\nversion=7.3.4\n");
+file_put_contents("$bw/os/os.json", '{"SchemaVersion":2,"Results":[]}');
+file_put_contents("$bw/os/packages.txt", "bash-5.3.003-x86_64-1\n");
+run($agg, $bw, "$w/base-slack.json");
+$rs = json_decode((string)file_get_contents("$w/base-slack.json"), true);
+t(($rs['host']['base'] ?? '') === 'slackware', "no pkg_base but a non-empty packages.txt -> base slackware");
+$bw = "$w/base-none"; @mkdir("$bw/os", 0755, true);
+file_put_contents("$bw/images.tsv", ''); file_put_contents("$bw/results.tsv", '');
+file_put_contents("$bw/os/result", "result=ok\nversion=7.3.4\n");
+file_put_contents("$bw/os/os.json", '{"SchemaVersion":2,"Results":[]}');
+@unlink("$bw/os/packages.txt");
+run($agg, $bw, "$w/base-none.json");
+$rn = json_decode((string)file_get_contents("$w/base-none.json"), true);
+t(($rn['host']['base'] ?? '') === 'unknown' && strpos($rn['images'][0]['os'] ?? '', 'Package base not recognised') === 0,
+  "no pkg_base and no packages.txt -> base unknown, OS label 'Package base not recognised ...' (" . ($rn['images'][0]['os'] ?? '') . ")");
+
+// ---- genuine Grype v0.121.0 output (tests/fixtures/ospkg-real): trimmed to 6 matches of a real Unraid 7.3.4 run
+$o = "$w/ospkg-real.json"; @unlink($o);
+run($agg, "$repo/tests/fixtures/ospkg-real", $o);
+$raw = (string)@file_get_contents($o);
+$r = json_decode($raw, true);
+$c = []; foreach ($r['cves'] ?? [] as $x) $c[$x['id']] = $x;
+$h = $r['host'] ?? [];
+t(($h['pkg_match'] ?? '') === 'ok' && ($r['images'][0]['vulns'] ?? 0) === 5 && ($h['suppressed_count'] ?? 0) === 2 && ($r['images'][0]['scan'] ?? '') === 'ok', "real Grype output: match ok, 5 findings, 2 not counted");
+$want = ['CVE-2026-111497' => 'CRITICAL', 'CVE-2026-7598' => 'CRITICAL', 'CVE-2026-94300' => 'HIGH',
+         'CVE-2026-89092' => 'MEDIUM', 'CVE-2026-95818' => 'LOW'];
+$got = []; foreach ($want as $id => $sev) $got[$id] = $c[$id]['severity'] ?? 'missing';
+t($got === $want, "real Grype output: CVE ids present, Critical/High/Medium/Low mapped to Trivy names: " . json_encode($got));
+t(($c['CVE-2026-111497']['affected'][0]['fixed'] ?? '') === '1.0.10, 1.1.1, 1.2.1' && ($c['CVE-2026-94300']['affected'][0]['fixed'] ?? '') === '9.20.30-s1, 9.20.30, 9.21.27'
+  && ($c['CVE-2026-89092']['affected'][0]['fixed'] ?? '') === '2.45' && ($c['CVE-2026-111497']['fix'] ?? '') === 'package',
+  "real Grype output: fixed versions carried (single and list), fix=package");
+t(($c['CVE-2026-7598']['fix'] ?? '') === 'none' && ($c['CVE-2026-7598']['affected'][0]['fixed'] ?? 'x') === '' && ($c['CVE-2026-7598']['affected'][0]['pkg'] ?? '') === 'libssh2',
+  "real Grype output: bounded match without a fix version -> fix=none");
+$sup = []; foreach ($h['suppressed'] ?? [] as $x) $sup[$x[0]] = $x;
+t(!isset($c['CVE-2026-33845']) && !isset($c['CVE-2019-1010022']) && ($sup['CVE-2026-33845'][1] ?? '') === 'gnutls' && ($sup['CVE-2019-1010022'][1] ?? '') === 'glibc'
+  && ($sup['CVE-2026-33845'][2] ?? '') === 'NVD gives no version range (lists every version as affected)',
+  "real Grype output: 'none (unknown)' matches (gnutls Critical, glibc Critical) are in host.suppressed with the reason, not in cves");
+t(($c['CVE-2026-89092']['affected'][0]['pkg'] ?? '') === 'glibc' && ($c['CVE-2026-89092']['affected'][0]['installed'] ?? '') === '2.44'
+  && ($c['CVE-2026-89092']['affected'][0]['path'] ?? '') === 'cpe gnu:glibc', "real Grype output: glibc matched through gnu:glibc");
+$sup = $sup ?? [];
+$srcs = []; foreach ($c as $x) foreach ($x['affected'] as $a) $srcs[$a['source'] ?? ''] = true;
+t(array_keys($srcs) === ['cpe'], "real Grype output: every finding has source cpe");
+t(($h['grype_db'] ?? '') === '2026-11-03T06:20:47Z', "real Grype output: DB date taken from descriptor.db.status.built (" . ($h['grype_db'] ?? '') . ")");
+t(($r['new_fixable_critical'] ?? -1) === 0, "real Grype output: fixable CRITICAL from the CPE match does not notify");
+$ctl = false;
+array_walk_recursive($r, function ($v) use (&$ctl) { if (is_string($v) && preg_match('/[\x00-\x08\x0b-\x1f\x7f]/', $v)) $ctl = true; });
+t(!$ctl && !preg_match('/[\x00-\x08\x0b-\x1f]/', $raw), "real Grype output: no control characters anywhere in the report");
+
+// ---- previous report's critical set follows the same rule
+$cw = "$w/crit-both"; critwork($cw, true);
+$prevCpe = ['cves' => [['id' => 'CVE-2025-7001', 'severity' => 'CRITICAL', 'fix' => 'package', 'affected' => [['img' => 0, 'source' => 'cpe']]]]];
+file_put_contents("$w/crit-prev.json", json_encode($prevCpe));
+$o = run($agg, $cw, "$w/crit-prev.json");
+t(strpos($o, 'new_fixable_critical=1') !== false, "previous report had the CVE only through source cpe, now also in an image -> new fixable critical");
+$prevOld = ['cves' => [['id' => 'CVE-2025-7001', 'severity' => 'CRITICAL', 'fix' => 'package', 'affected' => [['img' => 0]]]]];
+file_put_contents("$w/crit-prev2.json", json_encode($prevOld));
+$o = run($agg, $cw, "$w/crit-prev2.json");
+t(strpos($o, 'new_fixable_critical=0') !== false, "previous report entry without a source key counts as known -> 0 new fixable critical");
 exit($fail);

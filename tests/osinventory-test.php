@@ -54,4 +54,27 @@ t(($cmp['openssh']['version'] ?? '') === '9.9p1' && ($cmp['openssh']['cpe'] ?? '
 $pt = file("$p/patched.tsv", FILE_IGNORE_NEW_LINES);
 sort($pt);
 t($pt === ["CVE-2025-1111\topenssl", "CVE-2025-2222\topenssl"], "CVE ids in a changelog (also on continuation lines) -> patched for the source package: " . implode(' | ', $pt));
+
+// ---- upstream_version(): checked through the SBOM component versions
+$vers = ['tv1' => ['2.4_rc1', '2.4-rc1'], 'tv2' => ['1.0_beta2', '1.0-beta2'], 'tv3' => ['6.5_20241228', '6.5'],
+         'tv4' => ['20260508_3737842', '20260508'], 'tv5' => ['stable202602', '202602'], 'tv6' => ['v1.2.3', '1.2.3'],
+         'tv7' => ['1.2.3+lt', '1.2.3'], 'tv8' => ['3.8.13', '3.8.13']];
+$um = "$w/ver-map.txt"; $pl = ''; $ml = '';
+foreach ($vers as $n => [$in]) { $pl .= "$n-$in-x86_64-1\n"; $ml .= "$n vendor:$n\n"; }
+file_put_contents($um, $ml);
+$v = "$w/ver"; fresh($v, []); file_put_contents("$v/packages.txt", $pl);
+run($inv, [$v, $map, $um]);
+$cmp = []; foreach (json_decode((string)file_get_contents("$v/os.cdx.json"), true)['components'] ?? [] as $c) $cmp[$c['name']] = $c;
+foreach ($vers as $n => [$in, $want]) {
+  t(($cmp[$n]['version'] ?? null) === $want && ($cmp[$n]['cpe'] ?? '') === "cpe:2.3:a:vendor:$n:$want:*:*:*:*:*:*:*",
+    "Slackware version '$in' -> '$want' (got '" . ($cmp[$n]['version'] ?? 'none') . "')");
+}
+// RPM: the VERSION is already upstream, so '_' stays (a pre-release suffix or snapshot marker is not rewritten)
+$rv = "$w/rver"; fresh($rv, []);
+file_put_contents("$rv/rpm.tsv", "tr1\t0\t1.0_beta2\t1.fc42\tx86_64\ttr1-1.0_beta2-1.fc42.src.rpm\ntr2\t0\t6.5_20241228\t1.fc42\tx86_64\ttr2-6.5_20241228-1.fc42.src.rpm\n");
+file_put_contents($um, "tr1 vendor:tr1\ntr2 vendor:tr2\n");
+run($inv, [$rv, $map, $um]);
+$cmp = []; foreach (json_decode((string)file_get_contents("$rv/os.cdx.json"), true)['components'] ?? [] as $c) $cmp[$c['name']] = $c;
+t(($cmp['tr1']['version'] ?? '') === '1.0_beta2' && ($cmp['tr2']['version'] ?? '') === '6.5_20241228',
+  "RPM base leaves '_' in the version untouched (" . ($cmp['tr1']['version'] ?? 'none') . ', ' . ($cmp['tr2']['version'] ?? 'none') . ')');
 exit($fail);
