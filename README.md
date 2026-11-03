@@ -35,8 +35,11 @@ Requires Unraid 7.0 or later. Nothing is scanned or downloaded at install time o
 **Settings, Trivy Scan** and press **Scan now**, or set a schedule.
 
 The first scan downloads the pinned Trivy image (about 60 MB) and the vulnerability database (about 1.6 GB on
-disk), plus about 1.5 GB for the Java database unless you turn that off. They are kept in
-`/mnt/user/appdata/unraid-trivy-scan` and reused; Trivy refreshes the database at most about once a day.
+disk), plus about 1.5 GB for the Java database unless you turn that off, into the data directory,
+`<Docker appdata>/unraid-trivy-scan`. Under **Settings, Trivy Scan, Databases** you choose for each database whether it
+is kept there between scans (the default; then it is only refreshed when a newer build exists, about daily) or
+downloaded for every scan and deleted afterwards; the page shows each one's size (on disk now, at its last download,
+or an estimate). See [Databases](#databases).
 
 ## Features
 
@@ -97,6 +100,17 @@ URLs. The report page draws everything with `textContent`.
 Stop (button, upgrade or removal) only touches containers carrying this plugin's label; other Trivy containers on
 the server are left alone.
 
+### Databases
+
+| Database | Directory | Setting | Not kept |
+|---|---|---|---|
+| Trivy vulnerability DB | `<data dir>/cache/db` | `TRIVY_DB_KEEP` (default `yes`) | downloaded into the same place, deleted when the run ends |
+| Trivy Java DB | `<data dir>/cache/java-db` | `JAVA_DB_KEEP` (default `yes`) | same |
+
+Both share Trivy's one cache mount, which is not split (Trivy may move files within it), so a database that is not
+kept is removed after the run rather than placed elsewhere. "Update database" refreshes only the databases that are
+kept. The size of each database after its last download is noted in `<data dir>/db-sizes` for the settings page.
+
 ## What the OS scan covers
 
 Unraid OS is based on Slackware. Trivy (checked in the v0.76.1 source and docs, 2026-10-31) has **no Slackware
@@ -154,7 +168,9 @@ value is checked when the form is saved (the save is refused if anything is inva
 | `SCHEDULE` | empty (no schedule) or a 5-field cron expression, digits and `* , - /` only, range-checked | empty |
 | `SCOPE` | `running`, `all` | `running` |
 | `TIMEOUT` | minutes per image (and for the OS scan), 5 to 240 | `30` |
-| `JAVA_DB` | `yes`, `no` | `yes` |
+| `JAVA_DB` | `yes`, `no` (use the Java database, needed for images with jar files) | `yes` |
+| `TRIVY_DB_KEEP` | `yes`, `no` (keep the Trivy vulnerability database between scans; `no`: download it for every scan) | `yes` |
+| `JAVA_DB_KEEP` | `yes`, `no` (the same for the Java database) | `yes` |
 | `REGISTRY_CHECK` | `yes`, `no` | `no` |
 | `REGISTRY_AUTH` | `yes`, `no` (mount `/root/.docker/config.json` read-only into the registry-check container) | `no` |
 | `NOTIFY` | `yes`, `no` | `yes` |

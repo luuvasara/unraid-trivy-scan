@@ -444,7 +444,9 @@
     if (!r) {
       $body.replaceChildren(el('div', { className: 'uts-empty-state' },
         el('h3', null, 'No report yet'),
-        el('p', null, 'Press "Scan now" or set a schedule under Settings. The first scan downloads the pinned Trivy image (about 60 MB) and the vulnerability database (about 1.6 GB on disk, plus about 1.5 GB for the Java database if enabled). Later scans reuse them; Trivy refreshes the database at most once a day.')));
+        el('p', null, 'Press "Scan now", or set a schedule on the Settings tab.'),
+        el('p', null, 'The first scan downloads the pinned Trivy image (about 60 MB), the vulnerability database (about 1.6 GB on disk) and, if enabled, the Java database (about 1.5 GB).'),
+        el('p', null, 'On the Settings tab, under "Databases", you choose for each database whether it is kept on disk between scans (then it is only refreshed when a newer one is published, about once a day) or downloaded for every scan and deleted afterwards (no disk space used between scans, but the full download each time).')));
       return;
     }
     $table = el('table', { className: 'uts-table uts-cves' });

@@ -11,6 +11,8 @@ const UTS_DEFAULTS = [
   'SCOPE'          => 'running', // running | all (running and stopped containers)
   'TIMEOUT'        => '30',      // minutes per image, 5..240
   'JAVA_DB'        => 'yes',     // download the Java index DB (needed for jar files)
+  'TRIVY_DB_KEEP'  => 'yes',     // keep the Trivy vulnerability DB in the data dir (no: download every run, delete after)
+  'JAVA_DB_KEEP'   => 'yes',     // the same for the Java DB
   'REGISTRY_CHECK' => 'no',      // compare with the image in the registry
   'REGISTRY_AUTH'  => 'no',      // give /root/.docker/config.json to the registry container
   'NOTIFY'         => 'yes',     // notify on new fixable critical CVEs
@@ -175,3 +177,21 @@ function uts_report(): ?array {
 }
 
 function uts_date(int $t): string { return $t > 0 ? date('Y-m-d H:i', $t) : '-'; }
+
+/* ---- database sizes (settings page) ---- */
+
+/* Output of "trivy-scan db-sizes": <key>_now / <key>_last in KiB; anything else is ignored. */
+function uts_db_sizes(string $out): array {
+  $s = [];
+  foreach (explode("\n", $out) as $l) {
+    if (preg_match('/^(trivy|java)_(now|last)=([0-9]{1,12})$/', trim($l), $m)) $s["$m[1]_$m[2]"] = (int)$m[3];
+  }
+  return $s;
+}
+function uts_kib(int $k): string { return $k >= 1048576 ? sprintf('%.1f GB', $k / 1048576) : sprintf('%d MB', max(1, (int)round($k / 1024))); }
+/* "On disk: 1.6 GB" when present, else the size at the last download, else the estimate. */
+function uts_db_size(array $s, string $k, string $estimate): string {
+  if (isset($s["{$k}_now"])) return 'On disk: ' . uts_kib($s["{$k}_now"]);
+  if (isset($s["{$k}_last"])) return 'Not on disk now; ' . uts_kib($s["{$k}_last"]) . ' at its last download';
+  return "Not downloaded yet; about $estimate (estimate)";
+}
