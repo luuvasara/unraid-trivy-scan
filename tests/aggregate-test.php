@@ -223,4 +223,29 @@ $prevOld = ['cves' => [['id' => 'CVE-2025-7001', 'severity' => 'CRITICAL', 'fix'
 file_put_contents("$w/crit-prev2.json", json_encode($prevOld));
 $o = run($agg, $cw, "$w/crit-prev2.json");
 t(strpos($o, 'new_fixable_critical=0') !== false, "previous report entry without a source key counts as known -> 0 new fixable critical");
+// ---- "not counted" only on positive evidence (review findings): grouped per CVE/package/version, anchored marker
+$pw = "$w/ospkg-evidence"; @mkdir("$pw/os", 0755, true);
+foreach (['images.tsv', 'results.tsv', 'warnings.txt', 'os/result', 'os/os.json', 'os/inventory.tsv', 'os/packages.txt'] as $f)
+  if (is_file("$repo/tests/fixtures/ospkg-real/$f")) copy("$repo/tests/fixtures/ospkg-real/$f", "$pw/$f");
+$gm = function (string $id, ?string $vc, string $desc) {
+  $found = ['cpes' => ['cpe:2.3:a:gnu:glibc:*:*:*:*:*:*:*:*']]; if ($vc !== null) $found['versionConstraint'] = $vc;
+  return ['vulnerability' => ['id' => $id, 'severity' => 'High', 'description' => $desc, 'fix' => ['state' => 'unknown']],
+          'artifact' => ['name' => 'glibc', 'version' => '2.44'],
+          'matchDetails' => [['type' => 'cpe-match', 'searchedBy' => ['cpes' => ['cpe:2.3:a:gnu:glibc:2.44:*:*:*:*:*:*:*']], 'found' => $found]]];
+};
+file_put_contents("$pw/os/pkgmatch.json", json_encode(['descriptor' => ['db' => ['status' => ['built' => '2026-11-03T06:20:47Z']]], 'matches' => [
+  $gm('CVE-2030-0001', null, 'No constraint field at all.'),
+  $gm('CVE-2030-0002', 'none (unknown)', 'Listed twice, once without a range.'),
+  $gm('CVE-2030-0002', '< 2.45 (unknown)', 'Listed twice, once with a range.'),
+  $gm('CVE-2030-0003', '< 2.45 (unknown)', 'A flaw. The vendor says DISPUTED in the middle of the text.'),
+  $gm('CVE-2030-0004', '< 2.45 (unknown)', '** DISPUTED ** A flaw that the vendor disputes.'),
+  $gm('CVE-2030-0005', 'none (unknown)', 'Only without a range.'),
+]]));
+run($agg, $pw, "$w/evidence.json");
+$r = json_decode((string)@file_get_contents("$w/evidence.json"), true);
+$ids = array_column($r['cves'] ?? [], 'id'); sort($ids);
+$sup = []; foreach ($r['host']['suppressed'] ?? [] as $x) $sup[$x[0]] = $x[2];
+t($ids === ['CVE-2030-0001', 'CVE-2030-0002', 'CVE-2030-0003'], "counted: no constraint field, a range in any duplicate match, 'DISPUTED' not as NVD's leading marker (" . implode(',', $ids) . ")");
+t(($sup['CVE-2030-0004'] ?? '') === 'disputed (NVD)' && ($sup['CVE-2030-0005'] ?? '') === 'NVD gives no version range (lists every version as affected)' && count($sup) === 2,
+  "not counted: leading '** DISPUTED **' marker; no range in every match (" . json_encode($sup) . ")");
 exit($fail);
