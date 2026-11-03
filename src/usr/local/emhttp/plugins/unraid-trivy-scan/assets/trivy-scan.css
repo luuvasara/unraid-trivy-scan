@@ -92,13 +92,18 @@
 .uts-notice summary, .uts-images summary { cursor: pointer; font-weight: bold; }
 .uts-images { margin: 0 0 var(--uts-space-3); }
 .uts-images > .uts-scroll { margin-top: var(--uts-space-2); }
-/* the Unraid OS target and its package list (compact: multi-column, scrolls inside the collapsible) */
+/* the Unraid OS target and its package table (filter row, then a table that scrolls inside the collapsible) */
 .uts-os-badge { min-width: 0; border: 1px solid var(--uts-border); background: var(--uts-head); color: var(--uts-text); }
 .uts-host-note { max-width: 70em; margin: var(--uts-space-2) 0 0; }
 .uts-host .uts-meta { margin: var(--uts-space-1) 0 var(--uts-space-2); }
-.uts-pkglist { columns: 16em auto; column-gap: var(--uts-space-4); max-height: 22em; overflow-y: auto; margin: 0; padding: 0 0 0 var(--uts-space-1);
-  list-style: none; border-top: 1px solid var(--uts-border); padding-top: var(--uts-space-1); }
-.uts-pkglist li { break-inside: avoid; padding: 1px 0; overflow-wrap: anywhere; }
+.uts-pkgfilters { margin-top: 0; }
+.uts-pkgfilters > .uts-hint { align-self: flex-end; padding-bottom: var(--uts-space-1); }
+.uts-pkgscroll { max-height: 24em; overflow: auto; border: 1px solid var(--uts-border); border-radius: var(--uts-radius); }
+.uts-pkgscroll .uts-table thead th { position: sticky; top: 0; z-index: 1; }
+.uts .uts-pkgscroll .uts-table td, .uts .uts-pkgscroll .uts-table th { padding-top: 2px; padding-bottom: 2px; height: auto; line-height: 1.5; }
+.uts-pkgtable td:first-child, .uts-pkgtable td:nth-child(2) { white-space: nowrap; }
+.uts-host-hidden { margin-top: var(--uts-space-2); }
+.uts-host-hidden > summary { font-weight: normal; }
 
 /* filters */
 .uts-filters { display: flex; flex-wrap: wrap; align-items: flex-end; gap: var(--uts-space-2) var(--uts-space-4); margin: var(--uts-space-2) 0; }

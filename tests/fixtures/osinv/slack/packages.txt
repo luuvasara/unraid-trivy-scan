@@ -1,0 +1,7 @@
+bash-5.3.003-x86_64-1
+openssl-3.5.4-x86_64-1
+openssh-10.2p1-x86_64-1
+kernel-firmware-20261015_abcdef0-noarch-1
+samba-4.22.5-x86_64-1_LT
+some$(touch PWN)-1-x86_64-1
+oddname

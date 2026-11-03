@@ -1,0 +1,227 @@
+# unraid-trivy-scan: OS package name -> NVD CPE vendor:product, for the OS package CVE match (include/osinventory.php).
+#
+# Format: <package name> <vendor>:<product> [<vendor>:<product> ...]   ('#' starts a comment)
+#   - The name is the Slackware package name (Unraid 7.x) or the RPM *source* package name (Unraid 8, Fedora base);
+#     for RPMs the binary package name is tried as well, so openssl-libs finds the openssl line.
+#   - A pair is an application CPE (cpe:2.3:a:...). Prefix it with "o:" for an operating-system CPE.
+#   - Only pairs that exist in NVD's CPE dictionary are useful. A wrong pair that names a *different* product gives
+#     false findings, so a package is better left out than guessed.
+#   - Left out on purpose: Go programs (docker, containerd, runc, rclone, ...) and Node.js/Python packages, which the
+#     Trivy rootfs scan already matches from their embedded module lists; bundles such as aaa_libraries; firmware.
+# Additions or corrections on the server: /boot/config/plugins/unraid-trivy-scan/cpe-map.txt, same format. A line
+# there replaces the line here for that name; "<name> -" switches a name off.
+
+# ---- base system, libraries
+glibc                 gnu:glibc
+glibc-solibs          gnu:glibc
+aaa_glibc-solibs      gnu:glibc
+bash                  gnu:bash
+coreutils             gnu:coreutils
+util-linux            kernel:util-linux
+shadow                shadow-utils_project:shadow-utils
+shadow-utils          shadow-utils_project:shadow-utils
+pam                   linux-pam:linux-pam
+sudo                  sudo_project:sudo todd_miller:sudo
+grep                  gnu:grep
+sed                   gnu:sed
+gawk                  gnu:gawk
+findutils             gnu:findutils
+diffutils             gnu:diffutils
+patch                 gnu:patch
+tar                   gnu:tar
+cpio                  gnu:cpio
+gzip                  gnu:gzip
+bzip2                 bzip:bzip2
+xz                    tukaani:xz
+zlib                  zlib:zlib
+zstd                  facebook:zstandard
+lz4                   lz4_project:lz4
+lzo                   oberhumer:lzo
+brotli                google:brotli
+libarchive            libarchive:libarchive
+unzip                 info-zip:unzip unzip_project:unzip
+zip                   info-zip:zip
+p7zip                 7-zip:p7zip
+file                  file_project:file
+less                  gnu:less
+nano                  gnu:nano
+vim                   vim:vim
+screen                gnu:screen
+tmux                  tmux_project:tmux
+ncurses               gnu:ncurses
+readline              gnu:readline
+procps-ng             procps-ng_project:procps-ng
+inetutils             gnu:inetutils
+parted                gnu:parted
+e2fsprogs             e2fsprogs_project:e2fsprogs
+dosfstools            dosfstools_project:dosfstools
+ntfs-3g               tuxera:ntfs-3g
+fuse                  fuse_project:fuse
+fuse3                 fuse_project:fuse
+cryptsetup            cryptsetup_project:cryptsetup
+libcap                libcap_project:libcap
+libseccomp            libseccomp_project:libseccomp
+libffi                libffi_project:libffi
+libbsd                freedesktop:libbsd
+gmp                   gmplib:gmp
+elfutils              elfutils_project:elfutils
+binutils              gnu:binutils
+expat                 libexpat_project:libexpat
+libxml2               xmlsoft:libxml2
+libxslt               xmlsoft:libxslt
+sqlite                sqlite:sqlite
+pcre                  pcre:pcre
+pcre2                 pcre:pcre2
+oniguruma             oniguruma_project:oniguruma
+json-c                json-c_project:json-c
+jq                    jqlang:jq stedolan:jq
+libyaml               pyyaml:libyaml
+iniparser             iniparser_project:iniparser
+icu4c                 icu-project:international_components_for_unicode
+icu                   icu-project:international_components_for_unicode
+libuv                 libuv:libuv
+libevent              libevent_project:libevent
+libusb                libusb:libusb
+dmidecode             nongnu:dmidecode
+cracklib              cracklib_project:cracklib
+libgit2               libgit2_project:libgit2
+libmicrohttpd         gnu:libmicrohttpd
+libwebsockets         libwebsockets:libwebsockets
+dbus                  freedesktop:dbus
+polkit                polkit_project:polkit
+systemd               systemd_project:systemd
+grub                  gnu:grub2
+grub2                 gnu:grub2
+rpm                   rpm:rpm
+libsolv               opensuse:libsolv
+flatpak               flatpak:flatpak
+
+# ---- crypto, TLS, authentication
+openssl               openssl:openssl
+openssl-solibs        openssl:openssl
+openssl11             openssl:openssl
+openssl11-solibs      openssl:openssl
+gnutls                gnu:gnutls
+nettle                nettle_project:nettle
+libgcrypt             gnupg:libgcrypt
+libgpg-error          gnupg:libgpg-error
+gnupg                 gnupg:gnupg
+gnupg2                gnupg:gnupg
+libtasn1              gnu:libtasn1
+p11-kit               p11-kit_project:p11-kit
+mozilla-nss           mozilla:nss
+nss                   mozilla:nss
+nspr                  mozilla:netscape_portable_runtime
+mbedtls               arm:mbed_tls
+krb5                  mit:kerberos_5
+cyrus-sasl            cyrus:cyrus-sasl cmu:cyrus-sasl
+openldap              openldap:openldap
+sssd                  fedoraproject:sssd
+
+# ---- network
+openssh               openbsd:openssh
+curl                  haxx:curl haxx:libcurl
+wget                  gnu:wget
+wget2                 gnu:wget2
+libssh                libssh:libssh
+libssh2               libssh2:libssh2
+nghttp2               nghttp2:nghttp2
+nghttp3               ngtcp2:nghttp3
+ngtcp2                ngtcp2:ngtcp2
+c-ares                c-ares:c-ares c-ares_project:c-ares
+libidn2               gnu:libidn2
+bind                  isc:bind
+dhcpcd                roy_marples:dhcpcd dhcpcd_project:dhcpcd
+dnsmasq               thekelleys:dnsmasq
+ntp                   ntp:ntp
+chrony                tuxfamily:chrony
+iptables              netfilter:iptables
+nftables              netfilter:nftables
+iputils               iputils_project:iputils
+net-tools             net-tools_project:net-tools
+libpcap               tcpdump:libpcap
+tcpdump               tcpdump:tcpdump
+openvpn               openvpn:openvpn
+wpa_supplicant        w1.fi:wpa_supplicant
+wpa-supplicant        w1.fi:wpa_supplicant
+hostapd               w1.fi:hostapd
+bluez                 bluez:bluez
+avahi                 avahi:avahi
+net-snmp              net-snmp:net-snmp
+NetworkManager        gnome:networkmanager
+rsync                 samba:rsync
+git                   git-scm:git
+vsftpd                beasts:vsftpd
+
+# ---- file sharing, storage, services
+samba                 samba:samba
+cifs-utils            samba:cifs-utils
+nfs-utils             linux-nfs:nfs-utils
+rpcbind               rpcbind_project:rpcbind
+libtirpc              libtirpc_project:libtirpc
+netatalk              netatalk:netatalk
+nginx                 f5:nginx nginx:nginx
+php                   php:php
+apr                   apache:portable_runtime
+apr-util              apache:apr-util
+httpd                 apache:http_server
+mariadb               mariadb:mariadb
+nut                   networkupstools:nut
+smartmontools         smartmontools:smartmontools
+ipmitool              ipmitool_project:ipmitool
+zfs                   openzfs:openzfs
+openzfs               openzfs:openzfs
+rsyslog               rsyslog:rsyslog
+cockpit               cockpit-project:cockpit
+
+# ---- virtualisation
+qemu                  qemu:qemu
+libvirt               redhat:libvirt
+spice                 spice_project:spice
+edk2                  tianocore:edk2
+edk2-ovmf             tianocore:edk2
+ovmf                  tianocore:edk2
+
+# ---- languages and runtimes (the interpreter itself; its packages are matched by the Trivy scan)
+python3               python:python
+python                python:python
+perl                  perl:perl
+lua                   lua:lua
+ruby                  ruby-lang:ruby
+nodejs                nodejs:node.js
+
+# ---- media, graphics, GUI mode
+libpng                libpng:libpng
+libjpeg-turbo         libjpeg-turbo:libjpeg-turbo
+libtiff               libtiff:libtiff
+libwebp               webmproject:libwebp
+giflib                giflib_project:giflib
+freetype              freetype:freetype
+fontconfig            fontconfig_project:fontconfig
+cairo                 cairographics:cairo
+pango                 gnome:pango
+harfbuzz              harfbuzz_project:harfbuzz
+glib2                 gnome:glib
+gdk-pixbuf2           gnome:gdk-pixbuf
+librsvg               gnome:librsvg
+poppler               freedesktop:poppler
+ghostscript           artifex:ghostscript
+cups                  openprinting:cups apple:cups
+ImageMagick           imagemagick:imagemagick
+ffmpeg                ffmpeg:ffmpeg
+libvpx                webmproject:libvpx
+libsndfile            libsndfile_project:libsndfile
+flac                  flac_project:flac
+libvorbis             xiph.org:libvorbis
+opus                  opus-codec:opus
+mpg123                mpg123:mpg123
+libX11                x.org:libx11
+libx11                x.org:libx11
+libXpm                x.org:libxpm
+libxpm                x.org:libxpm
+xorg-server           x.org:xorg-server
+xorg-x11-server       x.org:xorg-server
+mesa                  mesa3d:mesa
+libvncserver          libvncserver_project:libvncserver
+mozilla-firefox       mozilla:firefox
+firefox               mozilla:firefox

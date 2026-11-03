@@ -83,4 +83,46 @@ t(($rf['images'][0]['scan'] ?? '') === 'failed' && strpos($rf['images'][0]['erro
 t(($rf['host']['name'] ?? '') === 'Unraid OS unknown', "an invalid version string becomes 'unknown'");
 t(($rf['host']['packages'][1][0] ?? '') === 'bad' && strpos((string)file_get_contents("$w/osfail.json"), '<img') === false,
   "package lines: control characters stripped, markup hex-escaped in the JSON");
+t(($rf['host']['pkg_match'] ?? '') === 'off', "no pkg_result in os/result -> OS package match off");
+
+// ---- OS packages matched against NVD CPEs by Grype (tests/fixtures/ospkg): Trivy rootfs failed, the match worked
+$o = "$w/ospkg.json"; @unlink($o);
+run($agg, "$repo/tests/fixtures/ospkg", $o);
+$r = json_decode((string)@file_get_contents($o), true);
+$c = []; foreach ($r['cves'] ?? [] as $x) $c[$x['id']] = $x;
+$h = $r['host'] ?? [];
+t(array_keys($c) === ['CVE-2025-9002', 'CVE-2025-9001', 'CVE-2025-9004'], "Grype matches become CVEs, by severity: " . implode(',', array_keys($c)));
+t(($r['images'][0]['scan'] ?? '') === 'failed' && ($r['images'][0]['vulns'] ?? 0) === 3, "OS package findings are kept even though the Trivy rootfs scan failed (3 findings)");
+$a = $c['CVE-2025-9001']['affected'] ?? [];
+t(count($a) === 1, "same CVE, package and version through two CPEs counted once");
+t(($a[0]['pkg'] ?? '') === 'openssl' && ($a[0]['installed'] ?? '') === '3.5.4' && ($a[0]['fixed'] ?? '') === '3.5.5' && ($a[0]['status'] ?? '') === 'fixed'
+  && ($a[0]['source'] ?? '') === 'cpe' && ($a[0]['path'] ?? '') === 'cpe openssl:openssl' && ($a[0]['img'] ?? -1) === 0,
+  "Grype match: package, installed, fixed, status, matched CPE, source=cpe, OS target");
+t(($c['CVE-2025-9001']['severity'] ?? '') === 'HIGH' && ($c['CVE-2025-9001']['fix'] ?? '') === 'package'
+  && ($c['CVE-2025-9001']['title'] ?? '') === 'A heap overflow in openssl lets a remote peer crash the service.'
+  && ($c['CVE-2025-9001']['url'] ?? '') === 'https://nvd.nist.gov/vuln/detail/CVE-2025-9001', "severity, fix, first sentence as title, NVD link");
+t(($c['CVE-2025-9002']['severity'] ?? '') === 'CRITICAL' && ($c['CVE-2025-9002']['fix'] ?? '') === 'none'
+  && ($c['CVE-2025-9002']['affected'][0]['status'] ?? '') === 'affected', "not-fixed -> status affected, fix=none");
+t(($c['CVE-2025-9004']['severity'] ?? '') === 'LOW' && ($c['CVE-2025-9004']['url'] ?? '') === 'https://example.org/advisory',
+  "GHSA id -> related CVE id; Negligible -> LOW; javascript: URL skipped for the next https one");
+t(!isset($c['CVE-2025-9003']) && !isset($c['CVE-2025-9005']), "os-ignore.txt entry and RPM-changelog backport are hidden");
+$sup = []; foreach ($h['suppressed'] ?? [] as $x) $sup[$x[0]] = $x;
+t(($h['suppressed_count'] ?? 0) === 2 && strpos($sup['CVE-2025-9003'][2] ?? '', 'os-ignore.txt: fixed by Lime Tech') === 0
+  && ($sup['CVE-2025-9005'][1] ?? '') === 'bash' && strpos($sup['CVE-2025-9005'][2] ?? '', 'changelog') !== false, "hidden matches listed with the reason");
+t(($r['summary']['invalid_entries'] ?? -1) === 2, "malformed Grype matches counted, not reported");
+t(($r['grype'] ?? '') === 'v0.121.0@sha256:0123', "Grype version (from os/result) in the report");
+t(($h['pkg_match'] ?? '') === 'ok' && ($h['mapped_count'] ?? 0) === 3 && ($h['package_count'] ?? 0) === 5 && ($h['grype_db'] ?? '') === '2026-11-01T04:12:00Z',
+  "host: match ok, 3 of 5 packages mapped, Grype DB date");
+t(($h['packages'][1] ?? null) === ['openssl', '3.5.4', '1', 'openssl:openssl'] && ($h['packages'][3] ?? null) === ['aaa_base', '16.0', '3', ''],
+  "inventory rows carry the CPE mapping (empty = unmapped)");
+t(strpos($r['images'][0]['os'] ?? '', 'Slackware-based (3 OS packages matched against NVD)') === 0, "OS column names the base and the match");
+t(strpos((string)file_get_contents($o), '<script') === false && strpos((string)file_get_contents($o), '<b>') === false, "markup from Grype output and the inventory hex-escaped");
+// Grype output broken
+$g = "$w/ospkgbad"; @mkdir("$g/os", 0755, true);
+foreach (['images.tsv', 'results.tsv', 'os/result', 'os/inventory.tsv'] as $fn) copy("$repo/tests/fixtures/ospkg/$fn", "$g/$fn");
+file_put_contents("$g/os/pkgmatch.json", "{oops");
+run($agg, $g, "$w/ospkgbad.json");
+$rb = json_decode((string)file_get_contents("$w/ospkgbad.json"), true);
+t(($rb['host']['pkg_match'] ?? '') === 'failed' && in_array('OS package CVE match failed: Grype output is not valid JSON', $rb['warnings'] ?? [], true),
+  "invalid Grype JSON -> match failed, warning in the report");
 exit($fail);

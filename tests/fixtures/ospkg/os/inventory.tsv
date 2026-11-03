@@ -1,0 +1,5 @@
+bash	5.3.003	1	gnu:bash	slackware
+openssl	3.5.4	1	openssl:openssl	slackware
+samba	4.22.5	1_LT	samba:samba	slackware
+aaa_base	16.0	3		slackware
+<b>x	1	1		slackware

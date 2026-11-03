@@ -17,6 +17,9 @@ const UTS_DEFAULTS = [
   'REGISTRY_AUTH'  => 'no',      // give /root/.docker/config.json to the registry container
   'NOTIFY'         => 'yes',     // notify on new fixable critical CVEs
   'OS_SCAN'        => 'yes',     // also scan the Unraid OS (trivy rootfs over the system directories, read-only)
+  'OS_PKG_MATCH'   => 'yes',     // with OS_SCAN: match the OS packages (Slackware or RPM) against NVD CPEs with Grype
+  'OS_PKG_DB_KEEP' => 'no',      // with OS_PKG_MATCH: keep the Grype DB in the data dir (no: download it every run, delete after)
+  'OS_KERNEL_MATCH'=> 'no',     // with OS_PKG_MATCH: include the kernel (many NVD entries, mostly backported by Lime Tech/Fedora)
   'SHOW_TAB'       => 'no',      // top-level header tab
   'DASH_TILE'      => 'yes',     // dashboard tile
   'REMOVE_DATA'    => 'no',      // on plugin removal delete the data dir and the pinned image
@@ -184,7 +187,7 @@ function uts_date(int $t): string { return $t > 0 ? date('Y-m-d H:i', $t) : '-';
 function uts_db_sizes(string $out): array {
   $s = [];
   foreach (explode("\n", $out) as $l) {
-    if (preg_match('/^(trivy|java)_(now|last)=([0-9]{1,12})$/', trim($l), $m)) $s["$m[1]_$m[2]"] = (int)$m[3];
+    if (preg_match('/^(trivy|java|grype)_(now|last)=([0-9]{1,12})$/', trim($l), $m)) $s["$m[1]_$m[2]"] = (int)$m[3];
   }
   return $s;
 }

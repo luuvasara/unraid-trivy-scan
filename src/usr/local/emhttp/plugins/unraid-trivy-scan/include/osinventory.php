@@ -1,0 +1,146 @@
+<?php
+/* unraid-trivy-scan: OS package inventory -> CycloneDX SBOM with NVD CPEs, for the OS package CVE match.
+ *
+ * Trivy has no advisory feed for Slackware (Unraid 7.x) or for Fedora / Fedora CoreOS (Unraid 8), so the OS packages
+ * are matched by upstream name and version against NVD's CPE data instead, by Grype (scripts/trivy-scan, role
+ * "ospkg"). This script only builds the input; it reads files written by scripts/trivy-scan and never runs anything.
+ *
+ * CLI only: php osinventory.php <osdir> <cpe-map> [<user cpe-map>] [kernel=<uname -r>] [os=<display name>]
+ * Reads from <osdir>, whichever exists:
+ *   packages.txt       Slackware: one /var/lib/pkgtools/packages entry per line (name-version-arch-build)
+ *   rpm.tsv            RPM: NAME \t EPOCH \t VERSION \t RELEASE \t ARCH \t SOURCERPM per line (rpm -qa --qf)
+ *   rpm-changelog.txt  RPM: "@@<NAME>" lines, each followed by that package's changelog text (rpm -qa --changelog)
+ * Writes to <osdir>:
+ *   inventory.tsv      name \t version \t build \t cpe vendor:product list (comma, empty = not mapped) \t base
+ *   os.cdx.json        CycloneDX 1.5 SBOM: one component per mapped package (purl pkg:generic, CPE 2.3)
+ *   patched.tsv        RPM only: CVE id \t package, for CVEs named in a package's changelog (a distro backport)
+ * Prints base=, packages=, mapped=, patched=.
+ *
+ * Every input line is treated as data: names and versions are length-capped and limited to a conservative
+ * character set; a line that does not fit is skipped. */
+if (PHP_SAPI !== 'cli') { http_response_code(404); exit; }
+
+const MAX_PKGS = 5000;
+
+function clean_tok($v, int $max = 100): string {   // package names, versions, builds
+  $v = trim((string)$v);
+  return preg_match('/^[A-Za-z0-9][A-Za-z0-9._+~:@-]{0,' . ($max - 1) . '}$/', $v) ? $v : '';
+}
+
+/* cpe-map.txt: name -> list of [part, vendor, product]. "<name> -" removes a name (user file). */
+function read_map(string $f, array $map = []): array {
+  foreach (@file($f, FILE_IGNORE_NEW_LINES) ?: [] as $line) {
+    $line = trim(preg_replace('/#.*$/', '', $line) ?? '');
+    if ($line === '') continue;
+    $f2 = preg_split('/\s+/', $line);
+    $name = clean_tok(array_shift($f2));
+    if ($name === '') continue;
+    if ($f2 === ['-']) { $map[$name] = []; continue; }
+    $pairs = [];
+    foreach ($f2 as $p) {
+      if (!preg_match('/^(?:([aoh]):)?([a-z0-9][a-z0-9._~-]{0,80}):([a-z0-9][a-z0-9._~+-]{0,80})$/', $p, $m)) continue;
+      $pairs[] = [$m[1] !== '' ? $m[1] : 'a', $m[2], $m[3]];
+    }
+    if ($pairs) $map[$name] = $pairs;
+  }
+  return $map;
+}
+
+/* CPE 2.3 formatted-string escaping for the version field: everything but [A-Za-z0-9._-] gets a backslash. */
+function cpe_esc(string $v): string { return preg_replace('/([^A-Za-z0-9._-])/', '\\\\$1', $v) ?? ''; }
+
+/* Upstream version as NVD writes it. Slackware uses "_" where upstream has "-" (e.g. 2.4_rc1); RPM VERSION is
+ * already upstream. A trailing "+..." (Unraid/Slackware local suffix) is cut. */
+function upstream_version(string $v, string $base): string {
+  if ($base === 'slackware') $v = str_replace('_', '-', $v);
+  $v = preg_replace('/\+.*$/', '', $v) ?? $v;
+  return ltrim($v, 'vV');
+}
+
+[$self, $dir, $mapFile] = array_pad($argv, 3, null);
+if (!$dir || !$mapFile || !is_dir($dir)) { fwrite(STDERR, "usage: osinventory.php <osdir> <cpe-map> [user-map] [kernel=..] [os=..]\n"); exit(2); }
+$opt = ['kernel' => '', 'os' => 'Unraid OS'];
+$userMap = '';
+foreach (array_slice($argv, 3) as $a) {
+  if (preg_match('/^(kernel|os)=(.*)$/', $a, $m)) $opt[$m[1]] = $m[2];
+  elseif ($userMap === '') $userMap = $a;
+}
+$map = read_map($mapFile);
+if ($userMap !== '' && is_file($userMap)) $map = read_map($userMap, $map);
+
+/* ---- the package list: [name, version, build, lookup names[]] */
+$pkgs = []; $base = 'unknown'; $patched = [];
+if (is_file("$dir/rpm.tsv")) {
+  $base = 'rpm';
+  $bySrc = []; $binToSrc = [];
+  foreach (array_slice(@file("$dir/rpm.tsv", FILE_IGNORE_NEW_LINES) ?: [], 0, MAX_PKGS * 4) as $line) {
+    $r = array_pad(explode("\t", $line), 6, '');
+    $name = clean_tok($r[0]); $ver = clean_tok($r[2]); $rel = clean_tok($r[3]);
+    if ($name === '' || $ver === '' || $name === 'gpg-pubkey') continue;
+    $src = preg_match('/^(.+)-[^-]+-[^-]+\.(?:no)?src\.rpm$/', trim($r[5]), $m) ? clean_tok($m[1]) : '';
+    if ($src === '') $src = $name;
+    $binToSrc[$name] = $src;
+    $k = "$src\t$ver";
+    if (!isset($bySrc[$k])) $bySrc[$k] = [$src, $ver, $rel, [$src]];
+    if (!in_array($name, $bySrc[$k][3], true)) $bySrc[$k][3][] = $name;
+  }
+  $pkgs = array_values($bySrc);
+  // CVE ids in a package's changelog: Fedora names a backported fix there ("Fix CVE-2025-1234"), so the upstream
+  // version alone would report it as still open.
+  $cur = null;
+  foreach (@file("$dir/rpm-changelog.txt", FILE_IGNORE_NEW_LINES) ?: [] as $line) {
+    if (strncmp($line, '@@', 2) === 0) { $n = clean_tok(substr($line, 2)); $cur = $n !== '' ? ($binToSrc[$n] ?? $n) : null; continue; }
+    if ($cur === null || !preg_match_all('/\bCVE-(\d{4})-(\d{4,7})\b/', $line, $mm, PREG_SET_ORDER)) continue;
+    foreach ($mm as $x) $patched["CVE-{$x[1]}-{$x[2]}\t$cur"] = true;
+  }
+} elseif (is_file("$dir/packages.txt")) {
+  $base = 'slackware';
+  foreach (array_slice(@file("$dir/packages.txt", FILE_IGNORE_NEW_LINES) ?: [], 0, MAX_PKGS) as $line) {
+    if (!preg_match('/^(.+)-([^-]+)-([^-]+)-([^-]+)$/', trim($line), $m)) continue;   // name-version-arch-build
+    $name = clean_tok($m[1]); $ver = clean_tok($m[2]); $build = clean_tok($m[4], 40);
+    if ($name === '' || $ver === '') continue;
+    $pkgs[] = [$name, $ver, $build, [$name]];
+  }
+}
+$pkgs = array_slice($pkgs, 0, MAX_PKGS);
+
+/* ---- the kernel, as one more component when asked for (setting OS_KERNEL_MATCH) */
+if ($opt['kernel'] !== '' && preg_match('/^([0-9]+\.[0-9]+(?:\.[0-9]+)?)/', $opt['kernel'], $m)) {
+  $map['linux-kernel'] = [['o', 'linux', 'linux_kernel']];
+  $pkgs[] = ['linux-kernel', $m[1], '', ['linux-kernel']];
+}
+
+/* ---- inventory.tsv and the SBOM */
+$inv = []; $components = []; $mapped = 0;
+foreach ($pkgs as $i => [$name, $ver, $build, $lookups]) {
+  $pairs = null;
+  foreach ($lookups as $l) if (array_key_exists($l, $map)) { $pairs = $map[$l]; break; }
+  $pairs = $pairs ?: [];
+  $inv[] = implode("\t", [$name, $ver, $build, implode(',', array_map(fn($p) => "$p[1]:$p[2]", $pairs)), $base]);
+  if (!$pairs) continue;
+  $up = upstream_version($ver, $base);
+  if (!preg_match('/^[0-9A-Za-z][0-9A-Za-z._~:-]{0,60}$/', $up)) continue;
+  $mapped++;
+  $cpes = array_map(fn($p) => "cpe:2.3:$p[0]:$p[1]:$p[2]:" . cpe_esc($up) . ':*:*:*:*:*:*:*', $pairs);
+  // always "library": Syft reads an "operating-system" component as the distro, and Grype would then look for a
+  // distro feed that does not exist instead of matching the CPEs
+  $c = ['type' => 'library', 'bom-ref' => 'pkg-' . ($i + 1),
+        'name' => $name, 'version' => $up, 'cpe' => $cpes[0],
+        'purl' => 'pkg:generic/' . rawurlencode($name) . '@' . rawurlencode($up)];
+  $props = [['name' => 'unraid-trivy-scan:installed', 'value' => $ver . ($build !== '' ? "-$build" : '')]];
+  foreach (array_slice($cpes, 1) as $extra) $props[] = ['name' => 'syft:cpe23', 'value' => $extra];   // Syft's key for further CPEs
+  $c['properties'] = $props;
+  $components[] = $c;
+}
+$bom = [
+  'bomFormat' => 'CycloneDX', 'specVersion' => '1.5', 'version' => 1,
+  // "application", not "operating-system", for the same reason as the components
+  'metadata' => ['timestamp' => gmdate('Y-m-d\TH:i:s\Z'),
+                 'component' => ['type' => 'application', 'bom-ref' => 'os', 'name' => substr(preg_replace('/[^A-Za-z0-9 ._+-]/', '', $opt['os']) ?? 'Unraid OS', 0, 60)]],
+  'components' => $components,
+];
+$ok = file_put_contents("$dir/inventory.tsv", $inv ? implode("\n", $inv) . "\n" : '') !== false
+   && file_put_contents("$dir/os.cdx.json", json_encode($bom, JSON_UNESCAPED_SLASHES | JSON_PRETTY_PRINT)) !== false;
+if ($base === 'rpm') $ok = $ok && file_put_contents("$dir/patched.tsv", $patched ? implode("\n", array_keys($patched)) . "\n" : '') !== false;
+if (!$ok) { fwrite(STDERR, "cannot write to $dir\n"); exit(1); }
+echo "base=$base\npackages=" . count($pkgs) . "\nmapped=$mapped\npatched=" . count($patched) . "\n";

@@ -17,6 +17,12 @@ echo "docker \$*" >>"$W/docker.log"
 case "\$1" in ps) exit 0 ;; info) exit 0 ;; esac
 case " \$* " in *" rootfs "*) [ -n "\${FAKE_OS_JSON:-}" ] && [ -z "\${FAKE_OS_FAIL:-}" ] && { cat "\$FAKE_OS_JSON"; exit 0; } ;; esac   # a large Trivy result
 case " \$* " in *" rootfs "*) [ -n "\${FAKE_OS_FAIL:-}" ] && { echo "FATAL fake failure" >&2; exit 1; }; echo '{"SchemaVersion":2,"Results":[]}' ;; esac
+case " \$* " in *" db update "*)   # Grype DB download: with FAKE_GRYPE_DB=1, leave a DB in the directory mounted at /db
+  [ -n "\${FAKE_GRYPE_DB:-}" ] && for a in "\$@"; do case "\$a" in *:/db) mkdir -p "\${a%:/db}/6" && echo x >"\${a%:/db}/6/vulnerability.db" ;; esac; done ;; esac
+case " \$* " in *" sbom:/in/os.cdx.json "*)
+  for a in "\$@"; do case "\$a" in *:/in/os.cdx.json:ro) cp "\${a%:/in/os.cdx.json:ro}" "$W/last-sbom.json" ;; esac; done
+  [ -n "\${FAKE_GRYPE_FAIL:-}" ] && { echo "ERROR fake grype failure" >&2; exit 1; }
+  cat "$W/grype.json" 2>/dev/null || echo '{"matches":[]}' ;; esac
 exit 0
 EOF
 chmod 755 "$W/bin/docker"
@@ -67,6 +73,9 @@ want='DASH_TILE=yes
 JAVA_DB=yes
 JAVA_DB_KEEP=yes
 NOTIFY=no
+OS_KERNEL_MATCH=no
+OS_PKG_DB_KEEP=no
+OS_PKG_MATCH=yes
 OS_SCAN=yes
 REGISTRY_AUTH=no
 REGISTRY_CHECK=yes
@@ -210,6 +219,70 @@ php -r 'require $argv[1]; $s = uts_db_sizes("trivy_now=1700000\njava_last=2048\n
   | grep -qx 'On disk: 1.6 GB|Not on disk now; 2 MB at its last download' && ok "settings page size texts: on disk / last download; junk lines ignored" || bad "size texts"
 php -r 'require $argv[1]; echo uts_db_size([], "java", "1.5 GB"), "\n";' "$P/include/lib.php" | grep -qx 'Not downloaded yet; about 1.5 GB (estimate)' && ok "settings page size text: estimate when never downloaded" || bad "estimate text"
 
+# ---------------------------------------------------------------- OS packages against NVD CPEs (Grype)
+OSD=$W/osdata/unraid-trivy-scan
+GDB=$OSD/grype-run   # default OS_PKG_DB_KEEP=no: per-run DB
+printf 'version="7.3.4"\n' >"$OR/etc/unraid-version"
+osrun 'OS_SCAN="yes"' 'JAVA_DB="no"' 'OS_PKG_MATCH="yes"'
+[ "$(osrep '$r["host"]["pkg_match"]." ".$r["host"]["pkg_error"]')" = "failed no OS package database (Grype DB download failed)" ] \
+  && ! grep -q 'role=pkgmatch' "$W/docker.log" && ok "no Grype DB: no match container, the report says why" || bad "no Grype DB: $(osrep 'json_encode($r["host"])')"
+export FAKE_GRYPE_DB=1
+cp "$HERE/tests/fixtures/ospkg/os/pkgmatch.json" "$W/grype.json"
+printf 'CVE-2025-9002 samba # test\n' >"$W/os-ignore.txt"   # next to the settings file ($W/os.cfg)
+osrun 'OS_SCAN="yes"' 'JAVA_DB="no"' 'OS_PKG_MATCH="yes"' && ok "run with the OS package match exits 0" || bad "pkg run: $(tail -3 "$W/os.log")"
+PL=$(grep -- '--label unraid-trivy-scan.role=pkgmatch' "$W/docker.log")
+[ "$(grep -c . <<<"$PL")" = 1 ] && grep -q -- "anchore/grype:v[0-9.]*@sha256:[0-9a-f]\{64\} sbom:/in/os.cdx.json -o json --by-cve -q$" <<<"$PL" \
+  && ok "one match container: pinned Grype, sbom:/in/os.cdx.json, JSON" || bad "pkgmatch container: $PL"
+grep -q -- '--cap-drop ALL --security-opt no-new-privileges --network none --read-only' <<<"$PL" && ! grep -q 'docker.sock\|--mount' <<<"$PL" \
+  && ok "match container: no network, read-only, no socket, no host directories" || bad "pkgmatch hardening: $PL"
+[ "$(grep -o -- ' -v [^ ]*' <<<"$PL" | sed 's/^ -v //' | sort | tr '\n' ' ')" = "$GDB:/db:ro $W/osdata/unraid-trivy-scan/work/os/os.cdx.json:/in/os.cdx.json:ro " ] \
+  && ok "match container gets exactly the Grype DB (read-only) and the SBOM (read-only)" || bad "pkgmatch mounts: $(grep -o -- ' -v [^ ]*' <<<"$PL")"
+GL=$(grep -- 'role=db' "$W/docker.log" | grep 'anchore/grype')
+grep -q -- "-v $GDB:/db anchore/grype:.* db update$" <<<"$GL" && ! grep -q 'docker.sock\|--network none' <<<"$GL" \
+  && ok "Grype DB download: db role, network, no socket, writes only $GDB" || bad "grype db container: $GL"
+[ ! -e "$GDB" ] && [ ! -e "$OSD/grype" ] && ok "OS_PKG_DB_KEEP=no: the per-run Grype DB is deleted when the scan ends, nothing kept" || bad "per-run grype DB left: $(ls "$OSD")"
+osrun 'OS_SCAN="yes"' 'JAVA_DB="no"' 'OS_PKG_DB_KEEP="yes"'
+grep -- 'role=db' "$W/docker.log" | grep -q -- "-v $OSD/grype:/db anchore/grype" && grep -- 'role=pkgmatch' "$W/docker.log" | grep -q -- "-v $OSD/grype:/db:ro " \
+  && [ -f "$OSD/grype/6/vulnerability.db" ] && [ ! -e "$OSD/grype/tmp" ] && [ ! -e "$GDB" ] \
+  && ok "OS_PKG_DB_KEEP=yes: DB downloaded into, kept in and mapped read-only from $OSD/grype" || bad "keep=yes: $(ls -R "$OSD" | head -20)"
+: >"$W/docker.log"
+UTS_CFG=$W/os.cfg UTS_DATA=$OSD UTS_RUN=$W/osrun UTS_LOG=$W/os.log UTS_PLUGIN_DIR=$P bash "$S" update-db --foreground
+grep -q 'anchore/grype.* db update' "$W/docker.log" && ok "update-db with OS_PKG_DB_KEEP=yes refreshes the kept Grype DB" || bad "update-db keep=yes: $(cat "$W/docker.log")"
+printf '%s\n' 'OS_SCAN="yes"' 'JAVA_DB="no"' >"$W/os.cfg"; : >"$W/docker.log"
+UTS_CFG=$W/os.cfg UTS_DATA=$OSD UTS_RUN=$W/osrun UTS_LOG=$W/os.log UTS_PLUGIN_DIR=$P bash "$S" update-db --foreground
+! grep -q 'anchore/grype' "$W/docker.log" && ok "update-db with OS_PKG_DB_KEEP=no skips Grype (nothing to keep)" || bad "update-db keep=no ran grype"
+osrun 'OS_SCAN="yes"' 'JAVA_DB="no"'
+[ ! -e "$OSD/grype" ] && [ ! -e "$GDB" ] && grep -q 'no longer kept' "$W/os.log" && ok "switching OS_PKG_DB_KEEP off deletes the kept DB at the next scan" || bad "kept DB not removed: $(ls "$OSD")"
+ln -s "$W/victim" "$OSD/grype-run"; osrun 'OS_SCAN="yes"' 'JAVA_DB="no"'
+[ -e "$W/victim/keep" ] && [ ! -e "$W/victim/tmp" ] && [ ! -e "$W/victim/6" ] && ! grep -q 'role=pkgmatch' "$W/docker.log" \
+  && ok "a symlink in place of the per-run DB dir is neither followed nor removed; match skipped" || bad "followed a grype-run symlink: $(ls "$W/victim")"
+rm -f "$OSD/grype-run"
+[ "$(osrep '$r["host"]["pkg_match"]." ".$r["host"]["base"]." ".$r["host"]["mapped_count"]')" = "ok slackware 1" ] && ok "report: match ok, Slackware, 1 package mapped (bash)" || bad "pkg report host: $(osrep 'json_encode($r["host"])')"
+[ "$(osrep 'implode(",", array_column($r["cves"], "id"))')" = "CVE-2025-9001,CVE-2025-9005,CVE-2025-9003,CVE-2025-9004" ] && ok "report: Grype CVEs on the OS target, os-ignore.txt next to the settings applied (9002 hidden)" || bad "pkg cves: $(osrep 'implode(",", array_column($r["cves"], "id"))')"
+php -r '$b=json_decode(file_get_contents($argv[1]),true); exit(array_column($b["components"],"name")===["bash"] ? 0 : 1);' "$W/last-sbom.json" \
+  && ok "SBOM: mapped packages only (bash; docker is left to the Trivy scan), no kernel by default" || bad "SBOM: $(cat "$W/last-sbom.json")"
+osrun 'OS_SCAN="yes"' 'JAVA_DB="no"' 'OS_KERNEL_MATCH="yes"'
+grep -q '"cpe:2.3:o:linux:linux_kernel:6.18.58:' "$W/last-sbom.json" && ok "OS_KERNEL_MATCH=yes: kernel 6.18.58 in the SBOM" || bad "kernel not in SBOM"
+FAKE_GRYPE_FAIL=1 osrun 'OS_SCAN="yes"' 'JAVA_DB="no"'
+[ "$(osrep '$r["host"]["pkg_match"]." ".$r["host"]["pkg_error"]." ".$r["images"][0]["scan"]')" = "failed ERROR fake grype failure ok" ] \
+  && osrep 'implode("|",$r["warnings"])' | grep -q 'OS package CVE match failed: ERROR fake grype failure' \
+  && ok "Grype failure: reason in the report and the warnings, the Trivy OS scan stays ok" || bad "grype fail: $(osrep 'json_encode($r["host"])')"
+osrun 'OS_SCAN="yes"' 'JAVA_DB="no"' 'OS_PKG_MATCH="no"'
+! grep -q 'role=pkgmatch\|anchore/grype' "$W/docker.log" && [ "$(osrep '$r["host"]["pkg_match"]')" = off ] \
+  && ok "OS_PKG_MATCH=no: no Grype pull, download or container; match off" || bad "OS_PKG_MATCH=no: $(grep grype "$W/docker.log")"
+# RPM base (Unraid 8 / Fedora): no pkgtools, an RPM database and rpm(8)
+rm -rf "$OR/var/lib/pkgtools"; mkdir -p "$OR/usr/lib/sysimage/rpm"
+printf '#!/bin/sh\necho "rpm $*" >>%s/rpm.log\ncase "$*" in *CHANGELOGTEXT*) cat %s ;; *) cat %s ;; esac\n' "$W" \
+  "$HERE/tests/fixtures/osinv/rpm/rpm-changelog.txt" "$HERE/tests/fixtures/osinv/rpm/rpm.tsv" >"$W/bin/fake-rpm"; chmod 755 "$W/bin/fake-rpm"
+UTS_RPM=$W/bin/fake-rpm osrun 'OS_SCAN="yes"' 'JAVA_DB="no"'
+grep -q -- "^rpm --root $OR -qa --qf" "$W/rpm.log" && ok "RPM base: rpm -qa --root <os root>" || bad "rpm call: $(cat "$W/rpm.log" 2>&1)"
+[ "$(osrep '$r["host"]["base"]." ".$r["host"]["package_count"]." ".$r["host"]["mapped_count"]')" = "rpm 4 3" ] && ok "report: RPM base, 4 source packages, 3 mapped" || bad "rpm host: $(osrep 'json_encode($r["host"])')"
+php -r '$b=json_decode(file_get_contents($argv[1]),true); $n=array_column($b["components"],"name"); sort($n); exit($n===["openssh","openssl","shadow-utils"] ? 0 : 1);' "$W/last-sbom.json" \
+  && ok "RPM SBOM: openssh, openssl, shadow-utils" || bad "rpm SBOM: $(cat "$W/last-sbom.json")"
+rm -rf "$OR/usr/lib/sysimage"
+osrun 'OS_SCAN="yes"' 'JAVA_DB="no"'
+[ "$(osrep '$r["host"]["pkg_error"]')" = "no package database found (neither Slackware pkgtools nor RPM)" ] && ok "no package database at all: reason in the report" || bad "no pkg db: $(osrep 'json_encode($r["host"])')"
+
 # ---------------------------------------------------------------- data dir follows Docker's appdata location (F2)
 # Real file: /boot/config/docker.cfg line 4 on a 7.3.4 server is DOCKER_APP_CONFIG_PATH="/mnt/user/appdata/" (quoted, trailing slash).
 dd_sh()  { printf '%s' "$1" >"$W/dd.cfg"; UTS_DOCKER_CFG=$W/dd.cfg bash "$S" datadir; }
@@ -299,6 +372,8 @@ grep -c 'TRIVY_IMAGE=' "$S" | grep -qx 1 && ! grep -rq 'aquasec/trivy:' "$P" --i
 
 # ---------------------------------------------------------------- aggregate on fixture Trivy JSON
 php "$HERE/tests/aggregate-test.php" "$HERE" || fail=1
+php "$HERE/tests/osinventory-test.php" "$HERE" || fail=1
+grep -c 'GRYPE_IMAGE=' "$S" | grep -qx 1 && ! grep -rq 'anchore/grype:' "$P" --include=*.php --include=*.page && ok "the Grype image is named in exactly one place" || bad "Grype image named in more than one place"
 
 # Every literal status message must survive clean() (scripts/trivy-scan), which turns any other character into '?':
 # 2026.11.02 showed "scan stopped before it finished? the previous report is kept" because of a ';'.
