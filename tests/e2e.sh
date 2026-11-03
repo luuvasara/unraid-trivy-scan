@@ -148,10 +148,12 @@ PKL=$(grep '^run ' "$W/docker.log" | grep 'role=pkgmatch')
 [ "$(grep -c . <<<"$PKL")" = 1 ] && grep -q -- '--network none' <<<"$PKL" && ! grep -q -e 'docker.sock' -e 'config.json' <<<"$PKL" \
   && ok "Grype match container: one, --network none, no Docker socket, no registry logins" || bad "Grype match container: $PKL"
 OVM=$(report 'implode(" ", array_map(fn($c)=>$c["id"], array_filter($r["cves"], fn($c)=>preg_match("/^CVE-(\\d{4})-/", $c["id"], $m) && $m[1] < 2024 && count(array_filter($c["affected"], fn($a)=>$a["img"]==='"$OSI"' && ($a["source"] ?? "")==="cpe" && stripos(($a["pkg"] ?? $a["package"] ?? ""), "ovmf")!==false))>0)))')
-# 9 older CVEs remain: their NVD CPE entries for tianocore:edk2 carry no version range ("none (unknown)"), so Grype
-# reports them for any version. Before the version was normalised, stable202602 was unparseable and matched 29.
+# Before the version was normalised, stable202602 was unparseable and matched 29 old CVEs. The old tianocore:edk2
+# entries that still match are NVD records without a version range ("none (unknown)"): those are listed as not
+# counted (host.suppressed), so no pre-2024 ovmf CVE may be a finding.
 NOVM=$(wc -w <<<"$OVM")
-[ "$NOVM" -lt 15 ] && ok "ovmf: $NOVM pre-2024 CPE finding(s) (unbounded NVD entries; 29 before stable202602 was normalised to 202602)" || bad "ovmf matched ancient CVEs again ($NOVM): $OVM"
+NSUP=$(report 'count(array_filter($r["host"]["suppressed"], fn($x)=>$x[1]==="ovmf" && strpos($x[2], "no version range")!==false))')
+[ "$NOVM" = 0 ] && [ "$NSUP" -gt 0 ] && ok "ovmf: no pre-2024 CPE finding; $NSUP range-less NVD entries listed as not counted" || bad "ovmf: $NOVM old finding(s): $OVM; suppressed $NSUP"
 [ "$(grep '^run ' "$W/docker.log" | grep -c -- '-grypedb ')" = 1 ] && ok "Grype DB downloaded once in scan 2 (kept for the later scans)" || bad "Grype DB downloads in scan 2: $(grep '^run ' "$W/docker.log" | grep -c -- '-grypedb ')"
 grep -q 'and the Unraid OS scanned, 0 failed' "$UTS_DATA/report/last-run" && ok "last-run: $(sed -n 's/^message=//p' "$UTS_DATA/report/last-run")" || bad "last-run: $(cat "$UTS_DATA/report/last-run")"
 cfg 'SCOPE="all"' 'REGISTRY_CHECK="yes"' 'REGISTRY_AUTH="no"' 'JAVA_DB="no"' 'OS_SCAN="no"'; : >"$W/docker.log"; unset UTS_REG_AUTH
