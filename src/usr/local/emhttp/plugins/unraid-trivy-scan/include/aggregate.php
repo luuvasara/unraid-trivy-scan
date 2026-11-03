@@ -95,7 +95,13 @@ function grype_vulns(array $j, int &$bad): array {
       ? implode(', ', array_filter(array_map(fn($x) => s($x, 60), array_slice($fix['versions'], 0, 5)), 'strlen')) : '';
     $url = url_ok($v['dataSource'] ?? '');
     if ($url === '') foreach ((is_array($v['urls'] ?? null) ? array_slice($v['urls'], 0, 5) : []) as $u) if (($url = url_ok($u)) !== '') break;
-    $cpe = '';
+    $cpe = ''; $bounded = false;
+    foreach ((is_array($m['matchDetails'] ?? null) ? $m['matchDetails'] : []) as $d) {
+      // Grype writes "none (unknown)" when the NVD entry has no version range, i.e. lists EVERY version as affected
+      // (grype/db/v6 vulnerability_provider.go); such a match says nothing about the installed version
+      $vc = is_array($d) ? s($d['found']['versionConstraint'] ?? '', 200) : '';
+      if ($vc !== '' && strncmp($vc, 'none', 4) !== 0) $bounded = true;
+    }
     foreach ((is_array($m['matchDetails'] ?? null) ? $m['matchDetails'] : []) as $d) {
       $c = $d['searchedBy']['cpes'][0] ?? ($d['found']['cpes'][0] ?? null);
       if (is_string($c) && preg_match('/^cpe:2\.3:[aho]:([^:]{1,80}):([^:]{1,80}):/', $c, $cm)) { $cpe = s("$cm[1]:$cm[2]", 170); break; }
@@ -103,7 +109,8 @@ function grype_vulns(array $j, int &$bad): array {
     $desc = s($v['description'] ?? '', 1000);
     $title = preg_match('/^(.{20,200}?[.!?])(\s|$)/u', $desc, $tm) ? $tm[1] : s($desc, 200);
     $out[] = [$id, $sev, s($a['name'] ?? '', 200), s($a['version'] ?? '', 100), $fixed, $state,
-              'OS package (NVD CPE match)', $title, $url, $cpe !== '' ? "cpe $cpe" : ''];
+              'OS package (NVD CPE match)', $title, $url, $cpe !== '' ? "cpe $cpe" : '',
+              $bounded, stripos($desc, '** DISPUTED **') !== false || stripos($desc, 'DISPUTED') === 0];
   }
   return $out;
 }
@@ -260,6 +267,9 @@ if ($osN !== null && $host['pkg_match'] === 'ok') {
       if (isset($seen[$key])) continue;
       $seen[$key] = true;
       $why = $sup[$id][$pkg] ?? ($sup[$id]['*'] ?? null);
+      if ($why === null && !$v[10]) $why = 'NVD gives no version range (lists every version as affected)';
+      if ($why === null && $v[11]) $why = 'disputed (NVD)';
+      $v = array_slice($v, 0, 10);
       if ($why !== null) { if (count($host['suppressed']) < 2000) $host['suppressed'][] = [$id, $pkg, $why]; continue; }
       add_finding($cves, $osN, $v, '', 'cpe');
       $images[$osN]['vulns']++;

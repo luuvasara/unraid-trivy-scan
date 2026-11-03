@@ -280,7 +280,7 @@
       el('p', { className: 'uts-meta' }, 'Kernel ', el('span', { className: 'uts-mono' }, str(h.kernel) || '-'), ' · ' + pk.length + ' ' + baseName + ' packages'),
       pkgTable(r, pk, matched),
       sup.length ? el('details', { className: 'uts-host-hidden' },
-        el('summary', null, num(h.suppressed_count) + ' NVD match(es) hidden as fixed or ignored'),
+        el('summary', null, num(h.suppressed_count) + ' NVD match(es) not counted: fixed, ignored, disputed, or without a version range'),
         el('div', { className: 'uts-pkgscroll' }, el('table', { className: 'uts-table uts-table-plain' },
           el('thead', null, el('tr', null, ['CVE', 'Package', 'Why hidden'].map(function (t) { return el('th', { scope: 'col' }, t); }))),
           el('tbody', null, sup.map(function (x) {
