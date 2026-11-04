@@ -531,6 +531,18 @@ bad_msgs=$(grep -oE 'last_run [a-z]+ "[^"$]*"' "$S" | sed -E 's/^last_run [a-z]+
 [ -z "$bad_msgs" ] && ok "status messages contain only characters clean() keeps" || bad "status messages clean() would mangle: $bad_msgs"
 
 # keep-old-begin
+# ---------------------------------------------------------------- Community Apps files
+CA=$HERE/plugins/unraid-cve-lens.xml
+php -r '$d=new DOMDocument(); exit($d->load($argv[1]) && $d->load($argv[2]) ? 0 : 1);' "$CA" "$HERE/ca_profile.xml" 2>/dev/null && ok "CA plugin wrapper and ca_profile.xml are well-formed XML" || bad "CA XML does not parse"
+CAURL=$(php -r '$d=new DOMDocument(); $d->load($argv[1]); echo $d->getElementsByTagName("PluginURL")->item(0)->textContent;' "$CA")
+PLGURL=$(php -r '$d=new DOMDocument(); $d->load($argv[1], LIBXML_NOENT); echo $d->documentElement->getAttribute("pluginURL");' "$PLG")
+[ "$CAURL" = "$PLGURL" ] && ok "CA wrapper PluginURL is the .plg's own pluginURL ($CAURL)" || bad "CA PluginURL $CAURL != $PLGURL"
+php -r '$d=new DOMDocument(); $d->load($argv[1]); $p=$d->getElementsByTagName("Profile")->item(0); exit($p && trim($p->textContent)!=="" ? 0 : 1);' "$HERE/ca_profile.xml" && ok "ca_profile.xml has a non-empty Profile (CA requires it)" || bad "ca_profile.xml Profile empty"
+for u in $(php -r '$d=new DOMDocument(); $d->load($argv[1]); foreach (["Icon","Screenshot"] as $t) foreach ($d->getElementsByTagName($t) as $e) echo $e->textContent, "\n";' "$CA"); do
+  f=${u#https://raw.githubusercontent.com/luuvasara/unraid-cve-lens/main/}
+  [ "$f" != "$u" ] && [ -f "$HERE/$f" ] && git -C "$HERE" ls-files --error-unmatch "$f" >/dev/null 2>&1 && ok "CA wrapper: $f exists and is tracked" || bad "CA wrapper points at a missing or untracked file: $u"
+done
+
 # ---------------------------------------------------------------- migration from "Trivy Scan" (unraid-trivy-scan)
 MIG=$P/scripts/migrate-from-trivy-scan
 M=$W/mig; rm -rf "$M"; mkdir -p "$M/bin2"

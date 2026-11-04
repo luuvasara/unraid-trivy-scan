@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<CommunityApplications>
+  <Profile>CVE Lens for Unraid, the former "Trivy Scan" plugin. It checks the images of your containers and the Unraid OS itself for known vulnerabilities (CVEs), with pinned Trivy and Grype releases that run in locked-down containers. Support and questions: the GitHub issues of this repository.</Profile>
+  <Icon>https://raw.githubusercontent.com/luuvasara/unraid-cve-lens/main/icon.png</Icon>
+  <WebPage>https://github.com/luuvasara/unraid-cve-lens</WebPage>
+</CommunityApplications>
