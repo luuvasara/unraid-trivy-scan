@@ -414,7 +414,7 @@ Log: `/var/log/unraid-cve-lens.log` ("View log" on the report and settings pages
 ## Building and testing
 
 ```
-./build.sh                 # packages/unraid-cve-lens-<version>-x86_64-1.txz + .md5, fills &md5; in the .plg
+./build.sh                 # packages/unraid-cve-lens-<version>-x86_64-1.txz + .md5, fills &md5; in the .plg; keeps the previous package (a cached old .plg still finds it), removes older ones
 tests/run-tests.sh         # lint, unit and render tests (offline)
 tests/run-tests.sh --e2e   # plus the end-to-end test against the local Docker
 ```
