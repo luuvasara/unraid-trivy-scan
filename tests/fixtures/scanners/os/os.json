@@ -1,0 +1,12 @@
+{"SchemaVersion": 2, "ArtifactName": "/rootfs", "ArtifactType": "filesystem",
+ "Results": [
+  {"Target": "Node.js", "Class": "lang-pkgs", "Type": "node-pkg", "Vulnerabilities": [
+    {"VulnerabilityID": "CVE-2025-2000", "PkgName": "axios", "PkgPath": "usr/local/unraid-api/node_modules/axios/package.json",
+     "InstalledVersion": "1.7.0", "FixedVersion": "1.8.2", "Status": "fixed", "Severity": "CRITICAL", "Title": "axios: example"},
+    {"VulnerabilityID": "CVE-2025-2000", "PkgName": "axios", "PkgPath": "usr/local/lib/node_modules/npm/node_modules/axios/package.json",
+     "InstalledVersion": "1.7.0", "FixedVersion": "1.8.2", "Status": "fixed", "Severity": "CRITICAL", "Title": "axios: example"}]},
+  {"Target": "usr/bin/containerd", "Class": "lang-pkgs", "Type": "gobinary", "Vulnerabilities": [
+    {"VulnerabilityID": "CVE-2025-1000", "PkgName": "stdlib", "InstalledVersion": "v1.24.2", "FixedVersion": "1.24.6",
+     "Status": "fixed", "Severity": "HIGH", "Title": "net/http: example"},
+    {"VulnerabilityID": "CVE-2025-3000", "PkgName": "google.golang.org/grpc", "InstalledVersion": "v1.70.0",
+     "Status": "affected", "Severity": "MEDIUM", "Title": "grpc: example without a fix"}]}]}

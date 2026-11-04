@@ -9,7 +9,7 @@ $webroot = getenv('WEBROOT');
 $plug = "$webroot/plugins/unraid-cve-lens";
 $uri = parse_url($_SERVER['REQUEST_URI'], PHP_URL_PATH);
 
-if (preg_match('~^/plugins/unraid-cve-lens/include/(status|report|action)\.php$~', $uri, $m)) {
+if (preg_match('~^/plugins/unraid-cve-lens/include/(status|report|action|log)\.php$~', $uri, $m)) {
   require "$plug/include/{$m[1]}.php";
   return true;
 }
@@ -33,6 +33,10 @@ $styles = ['default-fonts', 'default-cases', 'font-awesome', 'default-color-pale
 <?php foreach ($styles as $c): ?><link rel="stylesheet" href="/webGui/styles/<?=$c?>.css">
 <?php endforeach; ?>
 <script>var csrf_token = <?=json_encode($var['csrf_token'] ?? '')?>; function done() {}</script>
+<?php if (isset($_GET['fake_terminal'])): /* stands in for the webGui's openTerminal(); records the call, then "clicks" every View log link */ ?>
+<script>function openTerminal(t, n, m) { var h = document.documentElement; h.setAttribute('data-term', (h.getAttribute('data-term') || '') + '[' + [t, n, m].join('|') + ']'); }
+setTimeout(function () { document.querySelectorAll('a.uts-loglink').forEach(function (a) { a.click(); }); }, 2500);</script>
+<?php endif; ?>
 <style>body { padding: 16px; background: var(--background-color); color: var(--text-color); }</style>
 </head>
 <body>

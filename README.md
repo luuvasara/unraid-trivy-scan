@@ -91,14 +91,30 @@ You can also install CVE Lens directly and remove the old entry by hand; the sam
   base) are mapped to NVD product names (CPEs) and matched by upstream version with a pinned Grype image, because
   Trivy has no advisory feed for either base; optionally the kernel too. See
   [what the OS scan covers](#what-the-os-scan-covers).
+- Which scanner found what: a "Scanners" overview under the summary has one card each for Trivy, Grype (NVD match
+  of the OS packages) and the exploit data, with its version, database date, state (OK, partly, failed, off in the
+  settings), what it covered, how many CVEs it reported (a link that filters the table to them) and what it cannot
+  see. In the CVE table, each row and each finding in the expanded row carries a "Trivy" or "Grype · NVD" tag, and a
+  "Found by" filter narrows the table to one scanner. See [Which scanner found what](#which-scanner-found-what).
 - Per-target timeout. An image or OS scan that fails (timeout, unsupported content, missing Java database, ...) is
   listed with the reason instead of silently missing from the report.
 - Report: one row per CVE, expandable to the affected images, containers, packages, installed and fixed versions;
   filters for severity and fix status (CVEs without any fix are hidden by default, with a count), search, sortable
   columns, paging. Every value is put into the page as text, escaped exactly once.
+- Container risk: a collapsed table in the report with the settings of each scanned container that matter for
+  security (privileged, Docker socket, host network or PID, added capabilities, devices, starts as root, ports on all
+  interfaces, no healthcheck, `:latest`), read from `docker inspect` by the host script. Only these settings are read;
+  environment values, command lines and label values never are. It lists settings, not vulnerabilities.
 - A CVE that two images rate differently (for example CRITICAL in one distribution, HIGH in another) is counted
   once, at its highest severity.
-- Dashboard tile, optional header tab, Unraid notification when new fixable critical CVEs appear.
+- Exploit signals per CVE: a "Known exploited" badge for CVEs on CISA's Known Exploited Vulnerabilities (KEV) list,
+  an EPSS column (FIRST's estimated probability of exploitation in the next 30 days), a filter "Exploited / likely"
+  (KEV, or EPSS of 10% or more) and a KEV count in the summary. See [Exploit data](#exploit-data).
+- End-of-life base images: an image whose base OS release is end of life (Trivy's `Metadata.OS.EOSL`) gets an
+  "End of life base" badge in the scanned-targets table: that release gets no more security fixes, so findings may
+  show "no fix" for that reason.
+- Dashboard tile, optional header tab, Unraid notification when new fixable critical CVEs appear, and when a CVE on
+  the KEV list newly affects a container image.
 - Follows the active Unraid theme (black, white, gray, azure) through the theme's CSS variables.
 
 ## How it works
@@ -108,7 +124,7 @@ You can also install CVE Lens directly and remove the old entry by hand; the sam
 
 | Role | Network | Docker socket | Databases | Registry logins |
 |---|---|---|---|---|
-| Database download | yes | **no** | read-write | no |
+| Database download (also the exploit data download) | yes | **no** | read-write (the exploit data download gets only its own folder) | no |
 | Local image scan | **none** (`--network none`) | yes, needed to read local images | read-only | **never** |
 | Registry check (optional) | yes | **no** | read-only | only with "Use registry logins" |
 | Unraid OS scan (optional, on by default) | **none** (`--network none`) | **no** | read-only | **never** |
@@ -141,6 +157,30 @@ URLs. The report page draws everything with `textContent`.
 Stop (button, upgrade or removal) only touches containers carrying this plugin's label; other Trivy containers on
 the server are left alone.
 
+### Which scanner found what
+
+| Card | Looks at | Cannot see |
+|---|---|---|
+| **Trivy** | Container images (their OS packages and language packages), and the language packages inside the Unraid OS (Go binaries, Node.js, Python, ...) | The Unraid OS's own Slackware or RPM packages and the kernel: Trivy has no advisory feed for them |
+| **Grype · NVD** | The Unraid OS's own packages that have an NVD product mapping (`cpe-map.txt`), matched by upstream version | Fixes backported without a version change (they still show up), and packages without a mapping |
+| **Exploit data** | Nothing by itself: marks the CVEs the scanners found as known exploited (CISA KEV) or likely to be (EPSS) | - |
+
+![Scanners overview and Found by tags](docs/screenshots/scanners-light.png)
+
+The report keeps one row per CVE. A CVE that both scanners report stays one row, with both tags; the expanded row
+says where each one found it (for example an OpenSSL CVE in a container image, found by Trivy, and in the Unraid OS's
+`openssl` package, found by Grype). The two rarely overlap in practice: `cpe-map.txt` leaves out the Go programs and
+Node.js/Python packages that Trivy already matches, so the same package is never checked by both. On a test system
+with three images and Unraid 7.3.4 (361 CVEs: 303 from Trivy, 58 from Grype), no CVE was reported by both.
+
+The "Found by" filter (shown when the OS package match ran) picks the CVEs that one scanner reported; like the other
+filters it selects CVEs, so the expanded row and the export of the current view still list every finding of those
+CVEs, each with its own source. `#src=trivy` or `#src=cpe` in the page address opens the table with that filter.
+
+`report.json` carries the counts as `summary.by_source` (`trivy`, `cpe`, `both`: CVEs, not findings) and the state of
+the exploit data as `exploit.state` (`ok`, `partial`, `failed`, `off`) and `exploit.kev_source` (`cisa`, or `grype`
+when only Grype's database had KEV data).
+
 ### Databases
 
 | Database | Directory | Setting | Not kept |
@@ -148,11 +188,32 @@ the server are left alone.
 | Trivy vulnerability DB | `<data dir>/cache/db` | `TRIVY_DB_KEEP` (default `yes`) | downloaded into the same place, deleted when the run ends |
 | Trivy Java DB | `<data dir>/cache/java-db` | `JAVA_DB_KEEP` (default `yes`) | same |
 | Grype DB (OS package match) | `<data dir>/grype` | `OS_PKG_DB_KEEP` (default `yes`) | downloaded into `<data dir>/grype-run`, deleted when the run ends |
+| Exploit data (KEV, EPSS) | `<data dir>/exploit` | `EXPLOIT_DATA` (default `yes`; always kept, `no` deletes it) | not applicable |
 
 The two Trivy databases share Trivy's one cache mount, which is not split (Trivy may move files within it), so a
 Trivy database that is not kept is removed after the run rather than placed elsewhere. "Update database" refreshes
 only the databases that are kept. The size of each database after its last download is noted in
 `<data dir>/db-sizes` for the settings page.
+
+### Exploit data
+
+Two small public files, downloaded with the databases by a "database download" container (network, no Docker
+socket, `--read-only`, only `<data dir>/exploit` mounted, the pinned Trivy image's BusyBox `wget`, so no extra image):
+
+| File | Source | Size |
+|---|---|---|
+| `kev.json` | CISA Known Exploited Vulnerabilities, `https://www.cisa.gov/sites/default/files/feeds/known_exploited_vulnerabilities.json` | about 2 MB |
+| `epss.csv.gz` | FIRST EPSS, daily file `https://epss.empiricalsecurity.com/epss_scores-YYYY-MM-DD.csv.gz` (FIRST's page points to Empirical Security; the older `epss.cyentia.com` address redirects there) | about 3 MB |
+
+A download is capped at 50 MiB and checked (format, gzip) before it replaces the previous copy; if it fails, the last
+good copy stays and the scan warns. The files are kept between scans and only fetched when the databases are
+updated. `aggregate.php` joins them to the CVEs and treats every field as untrusted (CVE id, date and number formats
+are validated; at most 20,000 KEV entries and 1,000,000 EPSS lines are read; a file over 50 MiB is ignored). For the OS package
+match, Grype's own `knownExploited` and `epss` fields (its database carries both) are used where the files give
+nothing. Per CVE the report has `kev` (`{added, ransomware}` or `null`), `epss` and `epss_pct` (0 to 1, or `null`
+when there is no score). A CVE that newly appears on the KEV list and affects a container image triggers the
+notification; OS findings (Trivy or NVD CPE matches) do not, and nothing is "new" when the previous report had no
+KEV data. Turn all of this off with `EXPLOIT_DATA=no`.
 
 ## What the OS scan covers
 
@@ -233,6 +294,77 @@ depend on the base distribution.
 What a scan of the official 7.3.4 release found (test machine, 2026-10-31, vulnerability DB of that day) is in
 [Status](#status).
 
+## Ignoring findings
+
+`/boot/config/plugins/unraid-cve-lens/ignore.txt` (next to the settings file) hides findings you have judged
+harmless, with a reason and an optional expiry. One entry per line:
+
+    CVE-ID [scope] [until=YYYY-MM-DD] [# reason]
+
+- `scope` is `*` (everywhere, the default), `os` (the Unraid OS), or an image name. Without a tag
+  (`lscr.io/linuxserver/plex`) it covers every tag; with one (`nginx:1.19-alpine`) only that tag. For Docker Hub the
+  `docker.io/library/` prefix may be left out. Names are not matched by prefix or suffix.
+- After `until` (the day itself still counts) the entry hides nothing and the report lists it as an expired ignore,
+  with the number of findings that are counted again, so it does not go unnoticed.
+- A line that cannot be read is counted and listed with its line number; it is never dropped silently.
+- Ignored findings are left out of the counts (the Known exploited count too) and never trigger a notification (new
+  fixable critical, new known exploited). They are listed under "Ignored"
+  in the report (CVE, scope, image, reason, until). An ignored CVE that expires is a new finding again: the next scan
+  notifies it (once) under the same rules as any new finding, so an accepted risk is looked at again.
+- In an expanded CVE row, "Ignore..." writes a line here (scope: one of the affected images, or all), and
+  "Stop ignoring" in the Ignored list removes it. The page and the scan share one parser; the file is capped at
+  256 KiB and 5000 lines, and is replaced atomically.
+- A change applies at the next scan: the scan results are removed once the report is built, so the report cannot be
+  rebuilt without scanning again.
+- `os-ignore.txt` (CVE and package, OS package matches only, see Backports) keeps working as before.
+
+## Report export and history
+
+- Export, above the CVE table: CSV or JSON of the current view (search and filters applied) or of the whole report,
+  saved by the browser as `cve-lens-report-<date>[-filtered].csv|json`. The CSV has one row per CVE and affected
+  package in a target (its `source` column is `trivy` or `cpe`, the same two values as the "Found by" filter;
+  `cpe` is Grype's NVD match of the OS packages), starts with a UTF-8 byte order mark so spreadsheet programs read it correctly, and neutralises cells that
+  start with `=`, `+`, `-`, `@`, a tab or a carriage return so a spreadsheet does not run them as formulas.
+- Since the last scan: the CVEs that are new, and the ones that are gone. A CVE counts as gone only when every target
+  it affected was scanned successfully again, so a failed or skipped image does not make its findings look fixed.
+- `history.jsonl` next to `report.json` (`<data dir>/report/`): one line per scan with the time, the counts per
+  severity, fixable, images, failed, the OS CVE count and a hash of the CVE list. The last 90 scans are kept; the
+  report shows the last 30 as a small trend line (all CVEs and critical ones). The file holds no CVE details, so it
+  can be deleted at any time; the trend starts again from the next scan.
+
+## Progress and the log
+
+While a scan or a database update runs, the report page shows a progress panel under the status bar (collapsible,
+open while a run goes on):
+
+- every step of the run in order, each marked done, running, waiting, skipped or failed, with its duration: scanner
+  image downloads, each enabled database update (vulnerability DB, Java DB, Grype DB, exploit data), the image scans,
+  the Unraid OS scan, the OS package match, the registry check and the report. A failed step shows its reason;
+  steps a failed or stopped run never reached are marked skipped;
+- for downloads, how much has been written so far and the current rate (for example "412 MB so far, 3.1 MB/s");
+- for the image scans, "n of m", the image being scanned and an estimate of the time left from the average per
+  image so far;
+- the total time so far and the latest lines of this run's log.
+
+When no run is going on, the panel (collapsed) summarises the last run: result, when it ended, how long it took and
+each step's duration.
+
+"View log" (status bar, progress panel, Settings "About", and the dashboard tile after a failed run) opens Unraid's
+own log window, which follows `/var/log/unraid-cve-lens.log` as it grows. Where that window is not available it
+opens `include/log.php`, the last 500 lines of the same file as plain text; that endpoint takes no parameters and
+cannot read any other file.
+
+How it is measured, kept light for slow servers: the scan script writes the steps with their start and end times to
+`/var/run/unraid-cve-lens/steps` (a RAM disk) and copies them to `<data dir>/report/last-steps` when the run ends.
+During a download a sampler adds up, every 2 s, the sizes of the few files that download is writing: Trivy's
+temporary download directory (`<data dir>/dl-tmp`, mounted as the database container's `/tmp`, deleted afterwards),
+Grype's `tmp` folder, the exploit data's `.new` files, or Docker's blob downloads for an image pull
+(`/var/lib/docker/tmp/GetImageBlob*`, or containerd's `ingest` folder). The page asks for the state every 3 s while a
+run goes on and every 30 s otherwise; each request reads only these small files and the end of the log.
+
+| ![Progress panel during a database download, light theme](docs/screenshots/progress-light.png) | ![Progress panel during the image scans, dark theme](docs/screenshots/progress-dark.png) |
+|---|---|
+
 ## Settings
 
 Stored on the flash drive in `/boot/config/plugins/unraid-cve-lens/unraid-cve-lens.cfg` as plain
@@ -254,6 +386,7 @@ value is checked when the form is saved (the save is refused if anything is inva
 | `OS_SCAN` | `yes`, `no` (also scan the Unraid OS, see above) | `yes` |
 | `OS_PKG_MATCH` | `yes`, `no` (with `OS_SCAN`: match the OS packages against NVD with Grype) | `yes` |
 | `OS_PKG_DB_KEEP` | `yes`, `no` (with `OS_PKG_MATCH`: keep Grype's database between scans; `no`: download it for every scan) | `yes` |
+| `EXPLOIT_DATA` | `yes`, `no` (download CISA KEV and FIRST EPSS, kept between scans, and show them per CVE; see [Exploit data](#exploit-data)) | `yes` |
 | `OS_KERNEL_MATCH` | `yes`, `no` (with `OS_PKG_MATCH`: include the kernel) | `no` |
 | `SHOW_TAB` | `yes`, `no` | `no` |
 | `DASH_TILE` | `yes`, `no` | `yes` |
@@ -276,7 +409,7 @@ An invalid schedule never reaches cron; with no valid schedule there is no cron 
 /usr/local/emhttp/plugins/unraid-cve-lens/scripts/cve-lens start|stop|status|update-db|apply|config|image
 ```
 
-Log: `/var/log/unraid-cve-lens.log`.
+Log: `/var/log/unraid-cve-lens.log` ("View log" on the report and settings pages, see [Progress and the log](#progress-and-the-log)).
 
 ## Building and testing
 
@@ -334,7 +467,7 @@ release files in `tests/e2e.sh`, so the number of findings it gives there is not
 
 ## Thanks
 
-Thanks to Xaero for the original trivy-scan plugin on the Unraid forums, which this one is built on.   <!-- keep-old-name -->
+Thanks to Xaero for the original cve-lens plugin on the Unraid forums, which this one is built on.
 
 ## License
 

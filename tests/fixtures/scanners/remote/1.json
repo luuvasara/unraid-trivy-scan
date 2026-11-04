@@ -1,0 +1,31 @@
+{
+ "SchemaVersion": 2,
+ "ArtifactName": "example/web:1.2",
+ "ArtifactType": "container_image",
+ "Metadata": {
+  "OS": {
+   "Family": "alpine",
+   "Name": "3.18.9"
+  },
+  "ImageID": "example/web:1.2",
+  "RepoDigests": [
+   "example/web@sha256:9999999999999999999999999999999999999999999999999999999999999999"
+  ]
+ },
+ "Results": [
+  {
+   "Target": "remote",
+   "Vulnerabilities": [
+    {
+     "VulnerabilityID": "CVE-2024-0001",
+     "PkgName": "openssl",
+     "InstalledVersion": "3.1.3-r0",
+     "Status": "fixed",
+     "Severity": "CRITICAL",
+     "Title": "x",
+     "FixedVersion": "3.1.4-r0"
+    }
+   ]
+  }
+ ]
+}

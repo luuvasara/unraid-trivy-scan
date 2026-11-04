@@ -1,0 +1,16 @@
+{
+ "SchemaVersion": 2,
+ "ArtifactName": "example/db:2",
+ "ArtifactType": "container_image",
+ "Metadata": {
+  "OS": {
+   "Family": "alpine",
+   "Name": "3.19.0"
+  },
+  "ImageID": "example/db:2",
+  "RepoDigests": [
+   "index.docker.io/example/db@sha256:2222222222222222222222222222222222222222222222222222222222222222"
+  ]
+ },
+ "Results": []
+}

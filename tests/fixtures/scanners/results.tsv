@@ -1,0 +1,6 @@
+1	local	ok	
+2	local	ok	
+3	local	failed	timed out after 30 min (setting: Timeout per image)
+1	remote	ok	
+2	remote	ok	
+3	remote	skipped	container was created from an image ID
