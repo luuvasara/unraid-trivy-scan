@@ -2,11 +2,11 @@
 // Unraid 7.3.4's real local_prepend.php (started by tests/real-unraid-test.sh). Prints one "ok"/"FAIL" line per check.
 global.document = { getElementById: () => null };   // report.js returns early without its page
 const path = require('path');
-const { parseActionResponse } = require(process.env.UTS_REPORT_JS || path.join(__dirname, '..', 'src/usr/local/emhttp/plugins/unraid-trivy-scan/assets/report.js'));
+const { parseActionResponse } = require(process.env.UTS_REPORT_JS || path.join(__dirname, '..', 'src/usr/local/emhttp/plugins/unraid-cve-lens/assets/report.js'));
 const base = process.argv[2];
 let fail = 0;
 const check = (name, cond, got) => { console.log((cond ? 'ok   ' : 'FAIL ') + name + (cond ? '' : ': ' + JSON.stringify(got))); if (!cond) fail = 1; };
-const post = (body, headers) => fetch(base + '/plugins/unraid-trivy-scan/include/action.php', { method: 'POST', body, headers });
+const post = (body, headers) => fetch(base + '/plugins/unraid-cve-lens/include/action.php', { method: 'POST', body, headers });
 (async () => {
   let r = await post(new URLSearchParams({ action: 'start', csrf_token: 'WRONGWRONGWRONG0' }), {});
   const raw = await r.clone().text();

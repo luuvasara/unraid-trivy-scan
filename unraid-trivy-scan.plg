@@ -1,110 +1,68 @@
 <?xml version='1.0' standalone='yes'?>
 <!DOCTYPE PLUGIN [
   <!ENTITY name      "unraid-trivy-scan">
-  <!ENTITY author    "unraid-trivy-scan project">
-  <!ENTITY version   "2026.11.03">
-  <!ENTITY gitURL    "https://raw.githubusercontent.com/luuvasara/unraid-trivy-scan/main">
-  <!ENTITY pluginURL "&gitURL;/&name;.plg">
-  <!ENTITY pkg       "&name;-&version;-x86_64-1.txz">
-  <!ENTITY pkgURL    "&gitURL;/packages/&pkg;">
-  <!ENTITY md5       "d930d6849b9358f2572ea3aa0e205c85">
+  <!ENTITY version   "2026.11.04">
+  <!ENTITY pluginURL "https://raw.githubusercontent.com/luuvasara/unraid-cve-lens/main/unraid-trivy-scan.plg">
+  <!ENTITY newURL    "https://raw.githubusercontent.com/luuvasara/unraid-cve-lens/main/unraid-cve-lens.plg">
 ]>
-<!-- Vulnerability scan of Docker container images, and of the Unraid OS, with a pinned Trivy release.
-     Install: Plugins, Install Plugin, https://raw.githubusercontent.com/luuvasara/unraid-trivy-scan/main/unraid-trivy-scan.plg
-     The package is downloaded from packages/ in the same repository and MD5-checked.
-     Bump &version; on EVERY change (YYYY.MM.DD plus an optional letter); build.sh fills in &md5;.
-     The Trivy image (version and digest) is pinned in one place: TRIVY_IMAGE in scripts/trivy-scan; the Grype image
-     (OS package match) likewise in GRYPE_IMAGE.
-     The install step runs at every boot: it must never scan or download anything. -->
-<PLUGIN name="&name;" author="&author;" version="&version;" min="7.0.0" icon="shield"
-        launch="Settings/TrivyScan" pluginURL="&pluginURL;" support="https://github.com/luuvasara/unraid-trivy-scan/issues">
+<!-- TRANSITION FILE. Do not rename or delete; keep it at this path in this repository.
+     Trivy Scan is now CVE Lens (unraid-cve-lens.plg). An installed Trivy Scan finds out about updates by fetching its
+     own pluginURL, which is this path, so this file exists only to give old installs an "update" that installs CVE Lens.
+     It ships no package and no code of its own.
+     Rules that make it work (Unraid's `plugin` script):
+     - A plugin is identified by the file name it was installed under, not by name=, so this file keeps the old file
+       name and the old name. Its version must compare greater (string comparison) than the last real release of Trivy
+       Scan, 2026.11.03, or "Check for updates" never offers it.
+     - After the install script ends, `plugin update` copies this file back into place and re-registers the OLD
+       plugin, which would undo a `plugin remove` done inside the script. The old entry is therefore removed from a
+       detached job after a delay, once the plugin manager has finished.
+     - On a failed install of CVE Lens the script exits 1 and the old plugin stays as it was; the remove job is only
+       scheduled after a successful install.
+     CVE Lens's own install step moves the settings and the data folder (see scripts/migrate-from-trivy-scan). The
+     remove block below touches only pieces of the old plugin and never the migrated data. -->
+<PLUGIN name="&name;" author="CVE Lens project" version="&version;" min="7.0.0" icon="shield"
+        pluginURL="&pluginURL;" support="https://github.com/luuvasara/unraid-cve-lens/issues">
 
 <CHANGES>
-###2026.11.03
-- New (Xaero): the Unraid OS's own packages are now checked for CVEs. Trivy has no advisory data for Slackware (or for the Fedora base of Unraid 8), so the package list is mapped to NVD product names and matched by upstream version with a pinned Grype image, in a container without network, without the Docker socket and with nothing of the host but that list. Settings, Unraid OS: "Match OS packages against NVD" (on) and "Include the kernel" (off). NVD only knows upstream versions, so a fix Lime Tech backported can still show up: check findings against the release notes; os-ignore.txt next to the settings file hides a CVE.
-- NVD entries that give no version range (they list every version as affected) and disputed entries are listed as "not counted" with the reason instead of as findings. On the 7.3.4 release files that leaves 73 CVEs of 160 raw matches. OS package matches never trigger the "new fixable critical" notification.
-- New (Xaero): Settings, Databases: for each database (Trivy, Java, Grype) choose whether it is kept on disk between scans or downloaded for every scan and deleted afterwards, with its size. All are kept by default; the Grype database is about a 200 MB download and 3.1 GB on disk.
-- New (Xaero): the report has a Target filter: all, the Unraid OS, container images, or one image. The CVE count next to an OS package shows exactly that package's CVEs.
-- Fix (Xaero): with many images the report step could run out of memory and fail with an empty log line. It now has room for large runs, logs the real error, and keeps the scan results with a command to rebuild the report without scanning again.
-- Fix (Xaero): images built locally (compose, docker build) are no longer sent to the registry check, which could only fail with "authentication required".
-- Fix (Xaero): the header tab's page is now named Vulnerabilities, so the browser title and address match the tab label. A bookmark to /TrivyScanTab needs updating.
-###2026.11.02
-- Fix: the "scan stopped" and "no vulnerability database" status lines showed a stray "?" where a semicolon was.
-- New: a running scan is now stopped when you stop the array (Unraid's "stopping Docker" event), so it no longer holds the shares open or leaves scan containers behind.
-- Change: the data folder now follows the "Default appdata location" of Settings, Docker (default /mnt/user/appdata, so nothing changes unless you moved it). If you did, the first scan downloads the databases again into the new place; the old folder can be deleted by hand. If the location is not available (array stopped), the scan says so and creates nothing.
-- Fix: when the settings form refused a value, the page still printed a "Scheduled scan" line as if the change had been applied. It now says "Settings NOT saved" in the same log style as Unraid's own pages and does not touch the schedule. Also logged to the system log.
-- Fix: a rejected security token (session expired, page left open) showed "HTTP 200" on the buttons; it now says to reload the page.
-- Fix: the header tab was labelled "TRIVYSCANTAB"; it is now labelled "Vulnerabilities" (Unraid takes the label of a header tab from the page's Name, not its Title).
-- The header tab is now only shown while the array is started, like other plugins' tabs. The settings form no longer carries a duplicate token field and stores its file by the relative name Unraid's own forms use.
-- Tests now run the settings save through copies of Unraid 7.3.4's real update.php and request prologue.
-###2026.11.01c
-- Fix: the Scan now, Stop and Update database buttons still failed with "invalid csrf_token". Unraid's request prologue removes the token from both the form data and the X-CSRF-Token header after checking it, so the plugin's own second check could never pass. The plugin now relies on Unraid's check and only checks the token itself where that prologue is absent. Verified against the real prologue of Unraid 7.3.4.
-###2026.11.01b
-- Fix: after updating to 2026.11.01a the buttons could still fail with "invalid csrf_token", because the browser kept the old script: the pages keyed their script and style URLs on the file time, which the package sets to the release day. They now use a hash of the file contents, so every change reaches the browser.
-###2026.11.01a
-- Fix: the Scan now, Stop and Update database buttons failed with "Could not start: invalid csrf_token". Unraid's request prologue removes csrf_token from the form data after checking it, so the plugin's own second check never saw it; the page now also sends the token in the X-CSRF-Token header. A new test runs the buttons behind a prologue that behaves like Unraid's.
-###2026.11.01
-- Fix: a first install failed with "run failed: '/bin/bash' returned 1". The pre-install step returned the exit status of its last file test when no plugin package was on the flash yet; it now always ends with success.
-###2026.10.31
-- New: scan the Unraid OS itself (setting "Scan the Unraid OS", on by default). trivy rootfs runs in its own container with --network none, no Docker socket and a read-only database; only /usr, /lib, /lib64, /bin, /sbin and /opt are mounted, read-only and without the mounts below them. /mnt, /boot, /etc, /proc, /sys and /var/lib/docker are never mounted.
-- The OS findings (Go binaries such as Docker, containerd, runc and rclone; Node.js packages including the Unraid API; other language packages) appear in the report as the target "Unraid OS" plus its version (for example "Unraid OS 7.3.4"), with the file path of each affected package.
-- Trivy has no Slackware support, so the OS packages and the kernel are not CVE-matched. The report lists them (package, version, build, kernel version) in a collapsible section, with a link to the release notes.
-- Per-target timeout and failure reason also for the OS scan. Notification subject no longer says "Container images" only.
-###2026.10.27
-- First release.
-- Scans the images of running containers (optionally also stopped ones) by image ID with Trivy 0.76.1, pinned by version and digest.
-- Three container roles: the database download has network but no Docker socket; the local scan has the socket but runs with --network none and a read-only database; the optional registry check has network but no socket and is the only one that can receive registry logins.
-- Report: one row per CVE with the affected images and packages, severity and fix-status filters (CVEs without a fix hidden by default), search, sorting, paging, failed images with the reason, warnings.
-- Dashboard tile, optional header tab, notification on new fixable critical CVEs.
-- Settings are read as data and validated on save and on read; an invalid cron schedule never reaches cron.
-- No scan or download on install or at boot; a running scan is stopped on upgrade and removal; optional cleanup of the data directory and the Trivy image on removal.
+###2026.11.04
+- Trivy Scan is now CVE Lens. Updating installs CVE Lens, copies your settings, schedule and ignore lists, moves the data folder (databases and last report) without downloading it again, and removes this entry about a minute later. See https://github.com/luuvasara/unraid-cve-lens for details.
 </CHANGES>
 
-<!-- Pre-install: data dir on flash, stop a running scan before its script is replaced (upgrade), drop older packages. -->
 <FILE Run="/bin/bash">
 <INLINE>
-mkdir -p /boot/config/plugins/&name;
-if [ -x /usr/local/emhttp/plugins/&name;/scripts/trivy-scan ]; then
-  /usr/local/emhttp/plugins/&name;/scripts/trivy-scan stop >/dev/null 2>&amp;1
+if [ -f /boot/config/plugins/unraid-cve-lens.plg ]; then
+  echo "CVE Lens is already installed."
+else
+  echo "Installing CVE Lens, the successor of Trivy Scan ..."
+  if ! plugin install &newURL;; then
+    echo "ERROR: CVE Lens could not be installed (see above). Trivy Scan was left unchanged; try again later."
+    exit 1
+  fi
 fi
-for f in /boot/config/plugins/&name;/&name;-*-x86_64-1.txz; do
-  case $f in */&name;-&version;-x86_64-1.txz) ;; *) if [ -f "$f" ]; then rm -f "$f"; fi ;; esac
-done
+# The plugin manager registers this file as installed after the script ends, which would put the old entry back.
+# Remove it once that is done, then let CVE Lens clean up what is left of the old plugin (old flash folder, Unraid's
+# "previously installed" record), which it only does once the old plugin is no longer installed.
+nohup setsid bash -c 'sleep 45; plugin remove unraid-trivy-scan.plg; /usr/local/emhttp/plugins/unraid-cve-lens/scripts/migrate-from-trivy-scan all &gt;&gt;/var/log/unraid-cve-lens.log 2&gt;&amp;1' >/dev/null 2>&amp;1 &lt;/dev/null &amp;
+echo "Trivy Scan will be removed from the plugin list in about a minute; CVE Lens is its replacement."
 exit 0
 </INLINE>
 </FILE>
 
-<!-- The package. -->
-<FILE Name="/boot/config/plugins/&name;/&pkg;" Run="upgradepkg --install-new --reinstall">
-<URL>&pkgURL;</URL>
-<MD5>&md5;</MD5>
-</FILE>
-
-<!-- Post-install (also at every boot): runtime dir and the cron entry from the saved settings. No scan, no download. -->
-<FILE Run="/bin/bash">
-<INLINE>
-chmod 755 /usr/local/emhttp/plugins/&name;/scripts/trivy-scan
-chmod 755 /usr/local/emhttp/plugins/&name;/event/stopping_docker
-mkdir -p /var/run/&name;
-/usr/local/emhttp/plugins/&name;/scripts/trivy-scan apply
-echo ""
-echo "Trivy Scan &version; installed. No scan has been started."
-echo "Open Settings, Trivy Scan to run the first scan or set a schedule. The first scan downloads the pinned"
-echo "Trivy image and the vulnerability database (about 1.6 GB on disk, plus about 1.5 GB for the Java database),"
-echo "and for the OS package match the Grype image and database. Settings, Databases: which ones are kept on disk."
-</INLINE>
-</FILE>
-
-<!-- Remove: stop, remove the cron entry, optional data/image cleanup (setting "When the plugin is removed"). -->
+<!-- Remove (runs when the old entry is removed): only the old plugin's own pieces. Deliberately NOT the old script's
+     "uninstall": with the setting "When the plugin is removed" on yes it deletes the data folder, which now belongs
+     to CVE Lens. The flash folder /boot/config/plugins/unraid-trivy-scan is cleaned up by CVE Lens's migration once
+     this entry is gone (files it copied are removed; anything changed since is kept and named in its log). -->
 <FILE Run="/bin/bash" Method="remove">
 <INLINE>
-if [ -x /usr/local/emhttp/plugins/&name;/scripts/trivy-scan ]; then
-  /usr/local/emhttp/plugins/&name;/scripts/trivy-scan uninstall
-fi
-removepkg &name;-&version;-x86_64-1 >/dev/null 2>&amp;1
-rm -rf /usr/local/emhttp/plugins/&name; /var/run/&name;
-rm -f /var/log/&name;.log /boot/config/plugins/&name;/&name;-*-x86_64-1.txz
-echo "Trivy Scan removed. Settings are kept in /boot/config/plugins/&name;/ (delete that folder to forget them)."
+for p in /var/log/packages/unraid-trivy-scan-*; do
+  [ -e "$p" ] &amp;&amp; removepkg "$(basename "$p")" >/dev/null 2>&amp;1
+done
+rm -rf /usr/local/emhttp/plugins/unraid-trivy-scan /var/run/unraid-trivy-scan
+rm -f /var/log/unraid-trivy-scan.log /boot/config/plugins/unraid-trivy-scan/unraid-trivy-scan-*-x86_64-1.txz
+rm -f /boot/config/plugins/unraid-trivy-scan/unraid-trivy-scan.cron
+[ -x /usr/local/sbin/update_cron ] &amp;&amp; /usr/local/sbin/update_cron
+echo "Trivy Scan removed. CVE Lens keeps working with the settings and data that were moved to it."
+exit 0
 </INLINE>
 </FILE>
 
