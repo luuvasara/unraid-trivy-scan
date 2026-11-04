@@ -2,6 +2,9 @@
 
 Copied by build.sh from the <CHANGES> block of unraid-cve-lens.plg; edit the .plg, not this file.
 
+## 2026.11.04b
+- Unraid 6.12 is supported (6.12.0 or later; it was 7.0). The Unraid OS scan failed there: Docker before version 25 does not know the mount option it used, so the option now follows the installed Docker version. The scan also skips the firmware files, which 6.12 keeps under /lib.
+- Dashboard tile: on Unraid 6.12, 7.0 and 7.1 the header now uses the same layout as the built-in tiles (the icon was cut off and the open link sat on a line of its own).
 ## 2026.11.04a
 - New: exploit data per CVE. A "Known exploited" badge for CVEs on CISA's Known Exploited Vulnerabilities list, an EPSS column (estimated chance of exploitation in the next 30 days), a filter "Exploited / likely" and a count in the summary. A CVE that newly appears on the list and affects a container image triggers a notification. Two small files (about 5 MB), downloaded with the databases by the existing download container; Settings, "Exploit data" turns it off.
 - New: images whose base OS release is end of life get an "End of life base" badge: that release gets no more fixes, so findings may show "no fix" for that reason.

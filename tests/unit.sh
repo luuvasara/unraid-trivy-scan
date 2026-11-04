@@ -14,7 +14,7 @@ fail=0; ok() { echo "ok   $*"; }; bad() { echo "FAIL $*"; fail=1; }
 cat >"$W/bin/docker" <<EOF
 #!/bin/sh
 echo "docker \$*" | tr '\n' ' ' | sed 's/ $//' >>"$W/docker.log"; echo >>"$W/docker.log"
-case "\$1" in ps) [ -f "$W/slow-ps" ] && sleep 20; [ -n "\${FAKE_PS:-}" ] && echo "\$FAKE_PS"; exit 0 ;; info) exit 0 ;; esac
+case "\$1" in ps) [ -f "$W/slow-ps" ] && sleep 20; [ -n "\${FAKE_PS:-}" ] && echo "\$FAKE_PS"; exit 0 ;; info) exit 0 ;; version) echo "\${FAKE_DOCKER_VERSION:-}"; exit 0 ;; esac
 case "\$1" in inspect) case " \$* " in
   *HostConfig.Privileged*) cat "$W/posture.out"; exit 0 ;;
   *" image "*) ;;
@@ -197,8 +197,18 @@ TG=$(grep -o 'target=/rootfs/[a-z0-9]*,readonly,bind-recursive=disabled' <<<"$OS
   && ok "OS container: 5 mounts plus the DB read-only, nothing else" || bad "OS extra mounts: $OSL"
 grep -qE "source=$OR/(mnt|boot|proc|sys|etc|var|dev|root|opt)|source=/(mnt|boot|proc|sys|etc|var)" <<<"$OSL" && bad "a forbidden directory was mounted" \
   || ok "never mounted: /mnt /boot /proc /sys /etc /var (incl. /var/lib/docker) /opt-symlink"
-grep -q -- 'rootfs --cache-dir /cache .*--offline-scan --scanners vuln .*--skip-dirs /rootfs/lib/modules .* /rootfs$' <<<"$OSL" \
-  && ok "OS scan: trivy rootfs /rootfs, offline, vuln only, /lib/modules skipped" || bad "OS trivy args: $OSL"
+grep -q -- 'rootfs --cache-dir /cache .*--offline-scan --scanners vuln .*--skip-dirs /rootfs/lib/modules,/rootfs/lib/firmware .* /rootfs$' <<<"$OSL" \
+  && ok "OS scan: trivy rootfs /rootfs, offline, vuln only, /lib/modules and /lib/firmware skipped" || bad "OS trivy args: $OSL"
+# the non-recursive mount option follows the Docker CLI: bind-nonrecursive=true before Docker 25 (Unraid 6.12 has 23.0
+# to 24.0, which reject bind-recursive), bind-recursive=disabled from 25 on (Docker 29 rejects bind-nonrecursive)
+for dv in 20.10.24:bind-nonrecursive=true 24.0.9:bind-nonrecursive=true 25.0.0:bind-recursive=disabled 27.0.3:bind-recursive=disabled \
+          29.8.2:bind-recursive=disabled garbage:bind-recursive=disabled; do
+  FAKE_DOCKER_VERSION=${dv%%:*} osrun 'OS_SCAN="yes"' 'JAVA_DB="no"' 'OS_PKG_MATCH="no"' >/dev/null 2>&1
+  OSV=$(grep -- '--label unraid-cve-lens.role=os' "$W/docker.log")
+  n=$(grep -o "target=/rootfs/[a-z0-9]*,readonly,${dv#*:}\"\\?\( \|$\)" <<<"$OSV" | wc -l)
+  [ "$n" = 5 ] && ! grep -q "bind-$([ "${dv#*:}" = bind-nonrecursive=true ] && echo recursive || echo nonrecursive)" <<<"$OSV" \
+    && ok "Docker ${dv%%:*}: OS mounts use ${dv#*:}" || bad "Docker ${dv%%:*}: want ${dv#*:} on 5 mounts, got $n: $OSV"
+done
 osrep() { php -r '$r=json_decode(file_get_contents($argv[1]),true); echo eval("return ".$argv[2].";"), "\n";' "$W/osdata/unraid-cve-lens/report/report.json" "$1"; }
 [ "$(osrep '$r["images"][0]["kind"]." ".$r["images"][0]["name"]." ".$r["summary"]["os"]')" = "os Unraid OS 7.3.4 ok" ] && ok "report: OS target 'Unraid OS 7.3.4', scanned" || bad "report OS: $(osrep 'json_encode($r["images"])')"
 [ "$(osrep 'json_encode([$r["host"]["kernel"], $r["host"]["packages"]])')" = '["6.18.58-Unraid",[["bash","5.3.003","1"],["docker","29.8.2","1_LT"]]]' ] \
