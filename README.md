@@ -32,7 +32,7 @@ Plugins, Install Plugin, paste:
 https://raw.githubusercontent.com/luuvasara/unraid-cve-lens/main/unraid-cve-lens.plg
 ```
 
-Requires Unraid 7.0 or later. Nothing is scanned or downloaded at install time or at boot. Open
+Requires Unraid 6.12 or later. Nothing is scanned or downloaded at install time or at boot. Open
 **Settings, CVE Lens** and press **Scan now**, or set a schedule.
 
 The first scan downloads the pinned Trivy image (about 60 MB) and the vulnerability database (about 1.6 GB on
@@ -135,12 +135,15 @@ gets nothing of the host's filesystem: only that database, read-only, and the SB
 package list. Where it is kept: see [Databases](#databases).
 
 The OS scan runs `trivy rootfs /rootfs`. It gets only `/usr`, `/lib`, `/lib64`, `/bin`, `/sbin` and `/opt` (when it
-exists and is not a symlink), each mounted read-only under `/rootfs` with `bind-recursive=disabled`, so anything
-mounted *below* them is not visible (on Unraid 7.x, `/usr` is itself an overlay on the `bzmodules` squashfs and is
-included; `/lib/firmware`, a separate overlay, is not). `/lib/modules` is skipped. `/mnt` (array, pools, user
+exists and is not a symlink), each mounted read-only and non-recursive under `/rootfs`, so anything mounted *below*
+them is not visible (on Unraid 7.x, `/usr` is itself an overlay on the `bzmodules` squashfs and is included;
+`/lib/firmware`, a separate overlay, is not). `/lib/modules` and `/lib/firmware` are skipped (on Unraid 6.12 both are
+part of the `/lib` overlay). `/mnt` (array, pools, user
 shares), `/boot`, `/etc`, `/proc`, `/sys`, `/var/lib/docker` and everything else are never mounted. `/etc` is left
 out on purpose: it holds configuration and secrets, and a test scan with and without it gave the same findings.
-`bind-recursive` needs Docker 25 or later; Unraid 7.0 ships Docker 27.0.3. The Slackware package list is read on the
+Non-recursive is `bind-recursive=disabled` from Docker 25 on (Unraid 7.0 ships 27.0.3) and `bind-nonrecursive=true`
+before that (Unraid 6.12 ships Docker 23.0 to 24.0); the script picks by `docker version`, as Docker 29 rejects the older
+option. The Slackware package list is read on the
 host by the script, from `/var/lib/pkgtools/packages` (file names only), and the version from `/etc/unraid-version`.
 
 Be clear about what this buys: whoever holds the Docker socket can ask Docker for anything, including a new

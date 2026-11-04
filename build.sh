@@ -33,7 +33,11 @@ for f in "$ST/$P"/*.page "$ST/$P"/include/*.php; do
 done
 # packages/ holds the current build and the one before it: right after a release, raw.githubusercontent.com can serve
 # the previous .plg for some minutes, and that .plg must still find its package. Older ones are removed.
-KEEP=$(for f in "$OUT/$NAME"-*-x86_64-1.txz; do [ -e "$f" ] && [ "$f" != "$OUT/$NAME-$VER-x86_64-1.txz" ] && echo "$f"; done | sort -V | tail -n 1)
+# sorted by the version alone: sort -V on whole file names puts 2026.11.04-x86_64 after 2026.11.04a-x86_64
+KEEP=$(for f in "$OUT/$NAME"-*-x86_64-1.txz; do
+         [ -e "$f" ] && [ "$f" != "$OUT/$NAME-$VER-x86_64-1.txz" ] || continue
+         v=${f#"$OUT/$NAME"-}; printf '%s\t%s\n' "${v%-x86_64-1.txz}" "$f"
+       done | sort -V -k1,1 | tail -n 1 | cut -f2)
 for f in "$OUT/$NAME"-*-x86_64-1.txz; do
   [ -e "$f" ] || continue
   [ "$f" = "$KEEP" ] || rm -f "$f" "$f.md5"

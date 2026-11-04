@@ -25,7 +25,14 @@ function run_page(string $f): void {
   global $docroot, $var, $mytiles;
   eval('?>' . page_body($f));
 }
-$styles = ['default-fonts', 'default-cases', 'font-awesome', 'default-color-palette', 'default-base', 'default-dynamix', "themes/$theme"];
+$legacy = getenv('WEBGUI') === '6.12';   // the 6.12.15 webGui layout (fetch-webgui.sh 6.12)
+$styles = $legacy ? ['default-fonts', 'default-cases', 'font-awesome', "default-$theme", "dynamix-$theme"]
+                  : ['default-fonts', 'default-cases', 'font-awesome', 'default-color-palette', 'default-base', 'default-dynamix', "themes/$theme"];
+/* 6.12: DashStats.page's own inline styles (font size of the tile icons, ...), PHP removed */
+$dashStyle = '';
+if ($legacy && preg_match('~<style>(.*?)</style>~s', (string)@file_get_contents("$docroot/plugins/dynamix/DashStats.page"), $m)) {
+  $dashStyle = preg_replace('~<\?.*?\?>~s', '', $m[1]);
+}
 ?><!DOCTYPE html>
 <html lang="en" class="Theme--<?=htmlspecialchars($theme)?>">
 <head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
@@ -37,11 +44,13 @@ $styles = ['default-fonts', 'default-cases', 'font-awesome', 'default-color-pale
 <script>function openTerminal(t, n, m) { var h = document.documentElement; h.setAttribute('data-term', (h.getAttribute('data-term') || '') + '[' + [t, n, m].join('|') + ']'); }
 setTimeout(function () { document.querySelectorAll('a.uts-loglink').forEach(function (a) { a.click(); }); }, 2500);</script>
 <?php endif; ?>
-<style>body { padding: 16px; background: var(--background-color); color: var(--text-color); }</style>
+<?php if ($legacy): /* div.tile is shown by the 6.12 dashboard script; shown here directly */ ?><style>body { padding: 16px; }<?=$dashStyle?> div.tile { display: block; }</style>
+<?php else: ?><style>body { padding: 16px; background: var(--background-color); color: var(--text-color); }</style>
+<?php endif; ?>
 </head>
 <body>
 <?php if ($uri === '/Dashboard'): ?>
-<div class="frame"><div class="grid"><div class="tile" id="tile3"><table id="db_box3" class="dashboard">
+<div class="frame"><div class="grid"><div class="tile" id="tile3"><table id="db_box3" class="<?=$legacy ? 'share_status dashboard' : 'dashboard'?>">
 <?php run_page("$plug/CveLensDash.page"); foreach (($mytiles ?? []) as $t) echo $t['column3'] ?? ''; ?>
 </table></div></div></div>
 <?php else: $sel = (int)($_GET['tab'] ?? 1); ?>

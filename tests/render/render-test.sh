@@ -11,9 +11,11 @@
 # DEMO_REPORT=<report.json> uses that report for the demo screenshots (e.g. one from tests/e2e.sh); default is the
 # aggregated tests/fixtures/basic. Screenshots: docs/screenshots/ (SHOTS=<dir> to change).
 #   scanners who found what: one card per scanner, Found by tags and filter
+#   webgui612 the pages and the dashboard tile in the Unraid 6.12.15 webGui layout (stylesheets and DashStats.page
+#            of that release): the tile uses the older header markup there
 #   progress the run panel: a fake running scan (steps, download sample, log), the idle summary, "View log" (Unraid's
 #            openTerminal when present, else include/log.php), and log.php itself
-# RENDER_PORT_BASE=<port> (default 18731): the harness listens on this port and the next 11, so runs in several
+# RENDER_PORT_BASE=<port> (default 18731): the harness listens on this port and the next 13, so runs in several
 # checkouts at the same time can use separate ranges.
 set -uo pipefail
 HERE=$(cd "$(dirname "$0")/../.." && pwd)
@@ -27,26 +29,29 @@ PB=${RENDER_PORT_BASE:-18731}
 PORT_HOSTILE=$PB PORT_DEMO_LIGHT=$((PB + 1)) PORT_DEMO_DARK=$((PB + 2)) PORT_EMPTY=$((PB + 3)) PORT_EXPLOIT=$((PB + 4))
 PORT_IGNORE_LIGHT=$((PB + 5)) PORT_IGNORE_DARK=$((PB + 6))
 PORT_PROG_LIGHT=$((PB + 7)) PORT_PROG_DARK=$((PB + 8)) PORT_PROG_IDLE=$((PB + 9))
-PORT_SCAN_LIGHT=$((PB + 10)) PORT_SCAN_DARK=$((PB + 11))
+PORT_SCAN_LIGHT=$((PB + 10)) PORT_SCAN_DARK=$((PB + 11)) PORT_612_LIGHT=$((PB + 12)) PORT_612_DARK=$((PB + 13))
 "$HERE/tests/render/fetch-webgui.sh" >/dev/null || { echo "FAIL cannot fetch webGui styles"; exit 1; }
+"$HERE/tests/render/fetch-webgui.sh" 6.12 >/dev/null || { echo "FAIL cannot fetch the 6.12.15 webGui styles"; exit 1; }
 
 PIDS=()
 # shellcheck disable=SC2329  # called by the EXIT trap
 cleanup() { for p in "${PIDS[@]}"; do kill "$p" 2>/dev/null; done; }
 trap cleanup EXIT
 
-scenario() {   # scenario <name> <port> <theme>: webroot + env + php -S in the background
-  local name=$1 port=$2 theme=$3
+scenario() {   # scenario <name> <port> <theme> [6.12]: webroot + env + php -S in the background
+  local name=$1 port=$2 theme=$3 gui=${4:-}
+  local wg=$HERE/tests/.work/webgui${gui:+-$gui}
   local d=$W/$name
   # a server already on this port (another checkout running the suite) would answer for this one
   if curl -s -o /dev/null --max-time 1 "http://127.0.0.1:$port/"; then echo "FAIL port $port is in use (set RENDER_PORT_BASE)"; exit 1; fi
   mkdir -p "$d/webroot/plugins" "$d/data/report" "$d/run"
-  ln -sfn "$HERE/tests/.work/webgui/webGui" "$d/webroot/webGui"
+  ln -sfn "$wg/webGui" "$d/webroot/webGui"
+  ln -sfn "$wg/dynamix" "$d/webroot/plugins/dynamix"     # DashStats.page of that webGui (the tile header reads it)
   ln -sfn "$P" "$d/webroot/plugins/unraid-cve-lens"
   [ -f "$d/varini" ] || printf 'csrf_token="0123456789ABCDEF"\n' >"$d/varini"
   printf '#!/bin/sh\necho "$*" >>%s/stub.log\ncase "$1" in image) echo "aquasec/trivy:0.76.1@sha256:790fd66d1697395d8693d1acaa1ea702406a20f109b6fc7bac8db623eca6c06c" ;; grype-image) echo "anchore/grype:v0.121.0@sha256:621d56d1d68106b787022c81546f7e0a36202a25d1239f0c20195fab8c16f7ea" ;; *) echo "scan started" ;; esac\n' "$d" >"$d/stub"
   chmod 755 "$d/stub"
-  env THEME="$theme" WEBROOT="$d/webroot" UTS_CFG="$d/cfg" UTS_DATA="$d/data" UTS_RUN="$d/run" UTS_VARINI="$d/varini" UTS_LOG="$d/log" \
+  env THEME="$theme" WEBGUI="$gui" WEBROOT="$d/webroot" UTS_CFG="$d/cfg" UTS_DATA="$d/data" UTS_RUN="$d/run" UTS_VARINI="$d/varini" UTS_LOG="$d/log" \
       UTS_SCRIPT="$d/stub" TZ=UTC php -S "127.0.0.1:$port" -t "$d/webroot" "$HERE/tests/render/router.php" >"$d/php.log" 2>&1 &
   PIDS+=($!)
 }
@@ -354,6 +359,30 @@ done
 if [ -z "${DEMO_REPORT:-}" ]; then DOM=$(dom "http://127.0.0.1:$PORT_DEMO_LIGHT/?tab=1")
 ! grep -q 'id="uts-src"' <<<"$DOM" && ! grep -q 'uts-srccell' <<<"$DOM" && grep -q 'uts-scanner-cpe uts-scanner-state-off' <<<"$DOM" && grep -q 'Off because the Unraid OS is not scanned' <<<"$DOM" \
   && ok "Trivy-only report: no Found by filter or column, Grype card off with the reason" || bad "Trivy-only report: Found by shown or Grype card wrong"; fi
+
+# ---------------------------------------------------------------- Unraid 6.12.15 webGui layout
+# The tile header follows the server's own dashboard: tile-header* spans where DashStats.page uses them (webGui 7.2
+# and later, the default harness above), the icon + div.section + control link of the stock 6.12-7.1 tiles otherwise.
+DOM=$(dom "http://127.0.0.1:$PORT_DEMO_LIGHT/Dashboard")
+grep -q "class=\"tile-header-main\"" <<<"$DOM" && ok "dashboard tile: tile-header markup with the current webGui" || bad "dashboard tile (current webGui): no tile-header"
+for theme in white black; do
+  port=$([ $theme = white ] && echo $PORT_612_LIGHT || echo $PORT_612_DARK); label=$([ $theme = white ] && echo light || echo dark)
+  L=$W/w612-$theme; mkdir -p "$L/data/report"; cp -r "$W/demo-$theme/data/." "$L/data/"
+  cp "$W/demo-$theme/cfg" "$L/cfg" 2>/dev/null || : >"$L/cfg"
+  scenario "w612-$theme" "$port" "$theme" 6.12; wait_up "$port" || bad "6.12 harness $theme"
+  U=http://127.0.0.1:$port
+  RAW=$(curl -s "$U/Dashboard"); DOM=$(dom "$U/Dashboard")
+  ! grep -q 'tile-header' <<<"$RAW" && grep -q "<i class='fa fa-shield f32'></i><div class='section'>Vulnerabilities<br><span>" <<<"$RAW" \
+    && grep -q "fa-external-link control" <<<"$RAW" && ok "6.12 dashboard tile ($theme): stock 6.12 header markup, no tile-header" || bad "6.12 tile header ($theme): $(grep -o "<tr><td>.\{0,300\}" <<<"$RAW" | head -1)"
+  grep -q 'uts-tile-sev' <<<"$DOM" && ok "6.12 dashboard tile ($theme): severity counts rendered" || bad "6.12 tile body ($theme)"
+  shot "$U/Dashboard" 560,330 "$W/tile-612-$label.png" && ok "screenshot tile-612-$label.png (tests/.work/render)" || bad "screenshot tile 612 $label"
+  for tab in 1 2; do
+    DOM=$(dom "$U/?tab=$tab")
+    if [ $tab = 1 ]; then grep -q 'class="uts-row' <<<"$DOM" && ok "6.12 report ($theme) renders rows" || bad "6.12 report rows ($theme)"
+    else grep -q 'uts-about' <<<"$DOM" && ok "6.12 settings ($theme) render" || bad "6.12 settings ($theme)"; fi
+    shot "$U/?tab=$tab" 1400,1500 "$W/page-612-$tab-$label.png" && ok "screenshot page-612-$tab-$label.png" || bad "screenshot 612 tab $tab $label"
+  done
+done
 
 # ---------------------------------------------------------------- empty state
 E=$W/empty; mkdir -p "$E"; scenario empty "$PORT_EMPTY" black; wait_up "$PORT_EMPTY" || bad "empty harness"
