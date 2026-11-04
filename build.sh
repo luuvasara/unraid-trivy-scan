@@ -1,12 +1,12 @@
 #!/bin/bash
-# build.sh [version] - build packages/unraid-trivy-scan-<version>-x86_64-1.txz on a workstation (never on the server).
+# build.sh [version] - build packages/unraid-cve-lens-<version>-x86_64-1.txz on a workstation (never on the server).
 # The version defaults to the .plg's &version; (and must match it). The .plg's &md5; entity is updated from the
 # built package and CHANGELOG.md is rebuilt from the .plg's <CHANGES>.
 # Directory modes are forced (the build umask is not trusted) and the archive root is verified: a Slackware package
 # extracts ./ over /, so a group-writable root entry would break the target system.
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
-NAME=unraid-trivy-scan
+NAME=unraid-cve-lens
 PLG=$HERE/$NAME.plg
 PLGVER=$(sed -n 's/^ *<!ENTITY version *"\([^"]*\)">.*/\1/p' "$PLG")
 VER=${1:-$PLGVER}
@@ -17,12 +17,17 @@ PKG=$OUT/$NAME-$VER-x86_64-1.txz
 P=usr/local/emhttp/plugins/$NAME
 ST=$(mktemp -d "$HERE/.build.XXXXXX"); trap 'rm -rf "$ST"' EXIT
 chmod 755 "$ST"
-cp -a "$HERE/src/." "$ST/"
+# only what git tracks under src/: a merge or rename can leave empty or untracked directories in the work tree,
+# and cp -a would ship them (an empty plugins/<old name>/ tree once did)
+UNTRACKED=$(git -C "$HERE" ls-files --others --exclude-standard -- src)
+[ -z "$UNTRACKED" ] || { echo "FATAL: untracked files under src/ (git add or remove them):"; echo "$UNTRACKED"; exit 1; }
+(cd "$HERE/src" && git ls-files -z --cached -- . | xargs -0 cp -a --parents -t "$ST/")
 find "$ST" -type d -exec chmod 755 {} +
 find "$ST" -type f -exec chmod 644 {} +
-chmod 755 "$ST/$P/scripts/trivy-scan" "$ST/$P/event/stopping_docker"   # emhttp_event runs only executable event files
+chmod 755 "$ST/$P/scripts/cve-lens" "$ST/$P/scripts/migrate-from-trivy-scan" "$ST/$P/event/stopping_docker"   # emhttp_event runs only executable event files
 bash -n "$ST/$P/event/stopping_docker"
-bash -n "$ST/$P/scripts/trivy-scan"
+bash -n "$ST/$P/scripts/cve-lens"
+bash -n "$ST/$P/scripts/migrate-from-trivy-scan"
 for f in "$ST/$P"/*.page "$ST/$P"/include/*.php; do
   LINT=$(php -d short_open_tag=1 -l "$f" 2>&1) || { echo "FATAL: php -l failed: $LINT"; exit 1; }
 done

@@ -2,7 +2,7 @@
 /* tests/aggregate-test.php <repo>: include/aggregate.php against tests/fixtures/basic (hand-written Trivy JSON,
  * schema 2). Prints "ok"/"FAIL" lines; exit 1 on any failure. Work files go to tests/.work/agg. */
 $repo = $argv[1];
-$agg = "$repo/src/usr/local/emhttp/plugins/unraid-trivy-scan/include/aggregate.php";
+$agg = "$repo/src/usr/local/emhttp/plugins/unraid-cve-lens/include/aggregate.php";
 $w = "$repo/tests/.work/agg"; @mkdir($w, 0755, true);
 $out = "$w/report.json"; @unlink($out);
 $fail = 0;

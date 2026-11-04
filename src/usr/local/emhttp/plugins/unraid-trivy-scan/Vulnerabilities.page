@@ -1,8 +1,0 @@
-Menu="Tasks:96"
-Type="xmenu"
-Name="Vulnerabilities"
-Title="Vulnerabilities"
-Code="f132"
-Tabs="true"
-Cond="$var['fsState'] == 'Started' && preg_match('/^SHOW_TAB=.?yes/m', (string)@file_get_contents('/boot/config/plugins/unraid-trivy-scan/unraid-trivy-scan.cfg'))"
----

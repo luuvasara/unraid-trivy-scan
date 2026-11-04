@@ -1,7 +1,13 @@
 # Changelog
 
-Copied by build.sh from the <CHANGES> block of unraid-trivy-scan.plg; edit the .plg, not this file.
+Copied by build.sh from the <CHANGES> block of unraid-cve-lens.plg; edit the .plg, not this file.
 
+## 2026.11.04
+- Renamed: Trivy Scan is now CVE Lens (the plugin checks container images and the Unraid OS with more than Trivy). The header tab is still "Vulnerabilities"; the settings page is Settings, CVE Lens.
+- Updating from Trivy Scan: "Check for updates" on the old entry installs CVE Lens and then removes the old entry, a minute later. Your settings, schedule and ignore lists are copied; the data folder (the vulnerability databases and the last report) is moved, not downloaded again, to the Docker appdata folder, as unraid-cve-lens. If the array is stopped at that moment, it is moved at the next boot or scan. The old log is added to the CVE Lens log, old notifications open the new settings page, and the dashboard tile keeps its place. Once the old entry is gone, the old folder on the flash drive is removed; a file in it that you changed after the update is kept and named in the log.
+- A scan of the old plugin that is still running is stopped, and its leftover containers are removed.
+- Bookmarks to /Settings/TrivyScan need updating to /Settings/CveLens.
+- The GitHub repository is now luuvasara/unraid-cve-lens (it was unraid-trivy-scan). The old addresses are forwarded; the install URL is https://raw.githubusercontent.com/luuvasara/unraid-cve-lens/main/unraid-cve-lens.plg
 ## 2026.11.03
 - New (Xaero): the Unraid OS's own packages are now checked for CVEs. Trivy has no advisory data for Slackware (or for the Fedora base of Unraid 8), so the package list is mapped to NVD product names and matched by upstream version with a pinned Grype image, in a container without network, without the Docker socket and with nothing of the host but that list. Settings, Unraid OS: "Match OS packages against NVD" (on) and "Include the kernel" (off). NVD only knows upstream versions, so a fix Lime Tech backported can still show up: check findings against the release notes; os-ignore.txt next to the settings file hides a CVE.
 - NVD entries that give no version range (they list every version as affected) and disputed entries are listed as "not counted" with the reason instead of as findings. On the 7.3.4 release files that leaves 73 CVEs of 160 raw matches. OS package matches never trigger the "new fixable critical" notification.
