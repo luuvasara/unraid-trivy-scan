@@ -1,0 +1,9 @@
+result=ok
+error=
+version=7.3.4
+kernel=6.18.58-Unraid
+pkg_result=ok
+pkg_error=
+pkg_base=slackware
+kernel_match=no
+grype=v0.121.0@sha256:0123

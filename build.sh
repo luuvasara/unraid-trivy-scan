@@ -31,7 +31,13 @@ bash -n "$ST/$P/scripts/migrate-from-trivy-scan"
 for f in "$ST/$P"/*.page "$ST/$P"/include/*.php; do
   LINT=$(php -d short_open_tag=1 -l "$f" 2>&1) || { echo "FATAL: php -l failed: $LINT"; exit 1; }
 done
-rm -f "$OUT"/$NAME-*-x86_64-1.txz "$OUT"/$NAME-*-x86_64-1.txz.md5   # packages/ holds only the current build
+# packages/ holds the current build and the one before it: right after a release, raw.githubusercontent.com can serve
+# the previous .plg for some minutes, and that .plg must still find its package. Older ones are removed.
+KEEP=$(for f in "$OUT/$NAME"-*-x86_64-1.txz; do [ -e "$f" ] && [ "$f" != "$OUT/$NAME-$VER-x86_64-1.txz" ] && echo "$f"; done | sort -V | tail -n 1)
+for f in "$OUT/$NAME"-*-x86_64-1.txz; do
+  [ -e "$f" ] || continue
+  [ "$f" = "$KEEP" ] || rm -f "$f" "$f.md5"
+done
 tar -C "$ST" --owner=root --group=root --numeric-owner --sort=name --mtime="$(tr . - <<<"${VER:0:10}") 00:00:00 UTC" -cJf "$PKG" .
 ROOT=$(tar -tJvf "$PKG" | sed -n 1p)   # sed reads all input: head -1 + pipefail = SIGPIPE
 echo "archive root entry: $ROOT"

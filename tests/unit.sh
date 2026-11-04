@@ -13,12 +13,31 @@ fail=0; ok() { echo "ok   $*"; }; bad() { echo "FAIL $*"; fail=1; }
 
 cat >"$W/bin/docker" <<EOF
 #!/bin/sh
-echo "docker \$*" >>"$W/docker.log"
-case "\$1" in ps) exit 0 ;; info) exit 0 ;; esac
+echo "docker \$*" | tr '\n' ' ' | sed 's/ $//' >>"$W/docker.log"; echo >>"$W/docker.log"
+case "\$1" in ps) [ -f "$W/slow-ps" ] && sleep 20; [ -n "\${FAKE_PS:-}" ] && echo "\$FAKE_PS"; exit 0 ;; info) exit 0 ;; esac
+case "\$1" in inspect) case " \$* " in
+  *HostConfig.Privileged*) cat "$W/posture.out"; exit 0 ;;
+  *" image "*) ;;
+  *) [ -n "\${FAKE_PS:-}" ] && printf 'cid\\037sha256:%s\\037web:latest\\037/web\\037\\n' "\$FAKE_IMG"; exit 0 ;; esac ;; esac
 case " \$* " in *" rootfs "*) [ -n "\${FAKE_OS_JSON:-}" ] && [ -z "\${FAKE_OS_FAIL:-}" ] && { cat "\$FAKE_OS_JSON"; exit 0; } ;; esac   # a large Trivy result
 case " \$* " in *" rootfs "*) [ -n "\${FAKE_OS_FAIL:-}" ] && { echo "FATAL fake failure" >&2; exit 1; }; echo '{"SchemaVersion":2,"Results":[]}' ;; esac
 case " \$* " in *" db update "*)   # Grype DB download: with FAKE_GRYPE_DB=1, leave a DB in the directory mounted at /db
   [ -n "\${FAKE_GRYPE_DB:-}" ] && for a in "\$@"; do case "\$a" in *:/db) mkdir -p "\${a%:/db}/6" && echo x >"\${a%:/db}/6/vulnerability.db" ;; esac; done ;; esac
+case " \$* " in *" --entrypoint sh "*)   # exploit data download: with FAKE_EXPLOIT=<dir>, leave the files in the directory mounted at /x
+  d=; for a in "\$@"; do case "\$a" in *:/x) d="\${a%:/x}" ;; esac; done
+  [ -n "\${FAKE_EXPLOIT:-}" ] && [ -n "\$d" ] && { cp "\$FAKE_EXPLOIT/kev.json" "\$d/kev.json.new"; cp "\$FAKE_EXPLOIT/epss.csv.gz" "\$d/epss.csv.gz.new"; }
+  [ -n "\${FAKE_EXPLOIT_BAD:-}" ] && [ -n "\$d" ] && { echo "not json" >"\$d/kev.json.new"; echo "not gzip" >"\$d/epss.csv.gz.new"; }
+  [ -n "\${FAKE_EXPLOIT_BIG:-}" ] && [ -n "\$d" ] && { cp "\$FAKE_EXPLOIT/kev.json" "\$d/kev.json.new"; truncate -s 52428801 "\$d/kev.json.new"; } ;; esac
+case " \$* " in *" --download-db-only "*|*" --download-java-db-only "*)   # Trivy DB download: FAKE_DL=<bytes> writes that much
+  # into the directory mounted at /tmp (as Trivy does under \$TMPDIR), waits FAKE_DL_WAIT s, snapshots the run state
+  [ -n "\${FAKE_DB_FAIL:-}" ] && { echo "FATAL fake db failure" >&2; exit 1; }
+  if [ -n "\${FAKE_DL:-}" ]; then
+    for a in "\$@"; do case "\$a" in *:/tmp) mkdir -p "\${a%:/tmp}/trivy-1/oci-download-1" "\${a%:/tmp}/getter1"; truncate -s "\$FAKE_DL" "\${a%:/tmp}/trivy-1/oci-download-1/db.tar.gz" "\${a%:/tmp}/getter1/archive" ;; esac; done
+    # FAKE_UNPACK=<bytes>: the unpacked database file Trivy writes into the cache after the download
+    [ -n "\${FAKE_UNPACK:-}" ] && for a in "\$@"; do case "\$a" in *:/cache) mkdir -p "\${a%:/cache}/db"; truncate -s "\$FAKE_UNPACK" "\${a%:/cache}/db/trivy.db" ;; esac; done
+    sleep "\${FAKE_DL_WAIT:-0}"
+    cp "\$UTS_RUN/steps" "$W/snap-steps" 2>/dev/null; cp "\$UTS_RUN/dl" "$W/snap-dl" 2>/dev/null
+  fi ;; esac
 case " \$* " in *" sbom:/in/os.cdx.json "*)
   for a in "\$@"; do case "\$a" in *:/in/os.cdx.json:ro) cp "\${a%:/in/os.cdx.json:ro}" "$W/last-sbom.json" ;; esac; done
   [ -n "\${FAKE_GRYPE_FAIL:-}" ] && { echo "ERROR fake grype failure" >&2; exit 1; }
@@ -70,6 +89,7 @@ printf '%s\r\n' 'SCHEDULE="$(touch PWN2)"' 'SCOPE=all; touch PWN3' 'TIMEOUT="060
 printf '%s\n' '* * * * * touch /PWN4' >>"$W/h.cfg"
 OUT=$(UTS_CFG=$W/h.cfg bash "$S" config)
 want='DASH_TILE=yes
+EXPLOIT_DATA=yes
 JAVA_DB=yes
 JAVA_DB_KEEP=yes
 NOTIFY=no
@@ -277,6 +297,34 @@ FAKE_GRYPE_FAIL=1 osrun 'OS_SCAN="yes"' 'JAVA_DB="no"'
 osrun 'OS_SCAN="yes"' 'JAVA_DB="no"' 'OS_PKG_MATCH="no"'
 ! grep -q 'role=pkgmatch\|anchore/grype' "$W/docker.log" && [ "$(osrep '$r["host"]["pkg_match"]')" = off ] \
   && ok "OS_PKG_MATCH=no: no Grype pull, download or container; match off" || bad "OS_PKG_MATCH=no: $(grep grype "$W/docker.log")"
+# exploit data (CISA KEV, FIRST EPSS): the download is a "db" container with network, no Docker socket and only its own directory
+XF=$HERE/tests/fixtures/exploit
+FAKE_EXPLOIT=$XF osrun 'OS_SCAN="no"' 'JAVA_DB="no"'
+XL=$(grep -- '-exploit ' "$W/docker.log")
+[ "$(grep -c . <<<"$XL")" = 1 ] && grep -q -- '--label unraid-cve-lens.role=db ' <<<"$XL" && grep -q -- '--cap-drop ALL --security-opt no-new-privileges' <<<"$XL" \
+  && ! grep -q 'docker.sock\|--network\|--privileged\|--pid\|--mount' <<<"$XL" && [ "$(grep -o -- ' -v ' <<<"$XL" | wc -l)" = 1 ] \
+  && grep -q -- "-v $OSD/exploit:/x " <<<"$XL" && grep -q -- '--read-only' <<<"$XL" && grep -qE -- 'aquasec/trivy:[0-9.]+@sha256:[0-9a-f]{64} ' <<<"$XL" \
+  && grep -q 'https://www.cisa.gov/sites/default/files/feeds/known_exploited_vulnerabilities.json' <<<"$XL" && grep -q 'https://epss.empiricalsecurity.com' <<<"$XL" \
+  && ok "exploit data download: db role, network (default bridge), no Docker socket, only $OSD/exploit mounted, read-only, pinned Trivy image" || bad "exploit container: $XL"
+[ -s "$OSD/exploit/kev.json" ] && [ -s "$OSD/exploit/epss.csv.gz" ] && [ ! -e "$OSD/exploit/kev.json.new" ] && [ ! -e "$OSD/exploit/epss.csv.gz.new" ] \
+  && ok "exploit data: valid downloads kept in $OSD/exploit, no temporary files left" || bad "exploit files: $(ls -la "$OSD/exploit")"
+cp "$OSD/exploit/kev.json" "$W/kev.good"
+FAKE_EXPLOIT_BAD=1 osrun 'OS_SCAN="no"' 'JAVA_DB="no"'
+cmp -s "$OSD/exploit/kev.json" "$W/kev.good" && [ ! -e "$OSD/exploit/kev.json.new" ] && gzip -t "$OSD/exploit/epss.csv.gz" && grep -q 'keeping the previous copy' "$W/os.log" \
+  && ok "exploit data: an invalid download is refused, the last good copy stays, with a warning" || bad "bad exploit download replaced the good copy: $(tail -3 "$W/os.log")"
+FAKE_EXPLOIT=$XF FAKE_EXPLOIT_BIG=1 osrun 'OS_SCAN="no"' 'JAVA_DB="no"'
+cmp -s "$OSD/exploit/kev.json" "$W/kev.good" && [ ! -e "$OSD/exploit/kev.json.new" ] && ok "exploit data: a download over 50 MiB is refused, the last good copy stays" || bad "oversize exploit file accepted"
+SZ=$(UTS_DATA=$OSD bash "$S" db-sizes)
+grep -qE '^exploit_now=[0-9]+$' <<<"$SZ" && grep -qE '^exploit_last=[0-9]+$' <<<"$SZ" && ok "db-sizes reports the exploit data (now and last)" || bad "db-sizes exploit: $SZ"
+: >"$W/docker.log"; printf '%s\n' 'OS_SCAN="no"' 'JAVA_DB="no"' >"$W/os.cfg"
+FAKE_EXPLOIT=$XF UTS_CFG=$W/os.cfg UTS_DATA=$OSD UTS_RUN=$W/osrun UTS_LOG=$W/os.log UTS_PLUGIN_DIR=$P bash "$S" update-db --foreground
+grep -q -- '-exploit ' "$W/docker.log" && ok "update-db refreshes the exploit data" || bad "update-db skipped exploit data"
+osrun 'OS_SCAN="no"' 'JAVA_DB="no"' 'EXPLOIT_DATA="no"'
+! grep -q -- '-exploit ' "$W/docker.log" && [ ! -e "$OSD/exploit" ] && ok "EXPLOIT_DATA=no: no download container, the kept files are removed" || bad "EXPLOIT_DATA=no: $(ls "$OSD"; grep exploit "$W/docker.log")"
+mkdir -p "$W/victim3"; touch "$W/victim3/keep"; ln -s "$W/victim3" "$OSD/exploit"
+FAKE_EXPLOIT=$XF osrun 'OS_SCAN="no"' 'JAVA_DB="no"'
+[ -e "$W/victim3/keep" ] && [ ! -e "$W/victim3/kev.json" ] && ! grep -q -- '-exploit ' "$W/docker.log" && ok "a symlink in place of the exploit directory is not followed" || bad "followed an exploit symlink: $(ls "$W/victim3")"
+rm -f "$OSD/exploit"
 # RPM base (Unraid 8 / Fedora): no pkgtools, an RPM database and rpm(8)
 rm -rf "$OR/var/lib/pkgtools"; mkdir -p "$OR/usr/lib/sysimage/rpm"
 printf '#!/bin/sh\necho "rpm $*" >>%s/rpm.log\ncase "$*" in *CHANGELOGTEXT*) cat %s ;; *) cat %s ;; esac\n' "$W" \
@@ -379,9 +427,102 @@ grep -q '^-rwxr-xr-x 0/0 .* ./usr/local/emhttp/plugins/unraid-cve-lens/event/sto
   && ok "package ships event/stopping_docker as -rwxr-xr-x root/root" || bad "package lacks an executable event/stopping_docker: $(tar -tJvf "$PKG" | grep event)"
 grep -c 'TRIVY_IMAGE=' "$S" | grep -qx 1 && ! grep -rq 'aquasec/trivy:' "$P" --include=*.php --include=*.page && ok "the Trivy image is named in exactly one place" || bad "Trivy image named in more than one place"
 
+# ---------------------------------------------------------------- container risk: what the host script asks docker for
+IMGID=$(printf 'e%.0s' $(seq 64))
+python3 -I - "$W/posture.out" "$IMGID" <<'PY'
+import json, sys
+img = "sha256:" + sys.argv[2]
+rows = [
+  ["cid1", img, "/web", True, "host", "host", ["SYS_ADMIN"], [{"PathOnHost": "/dev/dri"}], "", "CMD", None, ["/var/run/docker.sock"], {"80/tcp": [{"HostIp": "", "HostPort": "8080"}]}, False, "web:latest"],
+  ["cid2", img, "/quiet", False, "bridge", "", None, None, "1000:1000", None, ["/mnt/user/x:/x:rw"], [], {"22/tcp": [{"HostIp": "127.0.0.1", "HostPort": "2222"}]}, False, "web@sha256:" + "a" * 64],
+  ["cid3", img, "/ours", False, "bridge", "", None, None, "", None, None, [], {}, True, "aquasec/trivy"],
+]
+open(sys.argv[1], "w").write("\n".join(json.dumps(r) for r in rows) + "\n")
+PY
+FAKE_PS=cid FAKE_IMG=$IMGID osrun 'OS_SCAN="no"' 'JAVA_DB="no"' && ok "run with containers (fake docker) exits 0" || bad "posture run rc=$?: $(tail -3 "$W/os.log")"
+PIN=$(grep 'HostConfig.Privileged' "$W/docker.log")
+[ -n "$PIN" ] && ! grep -qE '\.Env|\.Cmd|\.Args|Entrypoint' <<<"$PIN" && ok "posture inspect names its fields and never asks for Env, Cmd, Entrypoint or the whole label set" || bad "posture inspect format: $PIN"
+[ "$(osrep 'json_encode(array_column($r["posture"], "container"))')" = '["quiet","web"]' ] \
+  && ok "report.posture: our own container left out, two containers listed" || bad "report posture: $(osrep 'json_encode($r["posture"])')"
+[ "$(osrep 'json_encode([$r["posture"][1]["privileged"], $r["posture"][1]["socket"], $r["posture"][1]["ports"], $r["posture"][1]["latest"], $r["posture"][0]["ports"], $r["posture"][0]["latest"], $r["posture"][0]["image_idx"]], JSON_UNESCAPED_SLASHES)')" = '[true,true,["8080/tcp"],true,[],false,0]' ] \
+  && ok "report.posture: flags and ports through the real script (loopback port and digest-pinned image not flagged)" || bad "posture flags: $(osrep 'json_encode($r["posture"])')"
+
+# ---------------------------------------------------------------- run steps, download progress, log tail (progress panel)
+# A real `run` with the fake docker: the steps file is planned from the settings, every step gets start/end/result,
+# and the copy kept for the idle summary (last-steps) has no step left waiting or running. The fake Trivy DB download
+# writes 5 MB under the /tmp mount and waits, so the sampler (every second here) must see it.
+LS=$W/osdata/unraid-cve-lens/report/last-steps
+stepf() { php -r 'require $argv[1]; $s = uts_steps($argv[2]); echo json_encode($s, JSON_UNESCAPED_SLASHES);' "$P/include/lib.php" "$1"; }
+rm -f "$LS" "$W/snap-steps" "$W/snap-dl"
+printf 'trivy=2000\n' >"$W/osdata/unraid-cve-lens/db-sizes" 2>/dev/null || { mkdir -p "$W/osdata/unraid-cve-lens"; printf 'trivy=2000\n' >"$W/osdata/unraid-cve-lens/db-sizes"; }
+FAKE_DL=5000000 FAKE_UNPACK=700000 FAKE_DL_WAIT=3 UTS_DL_EVERY=1 osrun 'OS_SCAN="yes"' 'JAVA_DB="no"' 'REGISTRY_CHECK="yes"' && ok "run with steps and a fake 5 MB DB download exits 0" || bad "steps run rc=$?: $(tail -3 "$W/os.log")"
+[ -f "$LS" ] && ok "last-steps written at the end of the run" || bad "no last-steps file"
+J=$(stepf "$LS")
+[ "$(php -r '$j=json_decode($argv[1],true); echo implode(" ", array_column($j["steps"], "id"));' "$J")" = "pull-trivy db-trivy pull-grype db-grype db-exploit scan os pkgmatch registry report" ] \
+  && ok "steps planned in run order from the settings (no Java DB: no db-java step)" || bad "step ids: $J"
+[ "$(php -r '$j=json_decode($argv[1],true); echo $j["mode"]," ",$j["result"]," ",count(array_filter($j["steps"], fn($s)=>in_array($s["state"],["waiting","running"])));' "$J")" = "scan ok 0" ] \
+  && ok "last-steps: mode scan, result ok, no step left waiting or running" || bad "last-steps states: $J"
+php -r '$j=json_decode($argv[1],true); foreach ($j["steps"] as $s) if ($s["state"]!=="skipped" && !($s["start"]>=$j["started"] && $s["end"]>=$s["start"] && $s["end"]<=$j["ended"])) exit(1); exit($j["ended"]>=$j["started"] && $j["started"]>0 ? 0 : 1);' "$J" \
+  && ok "every step that ran has start <= end within the run's start and end" || bad "step times: $J"
+[ "$(php -r '$j=json_decode($argv[1],true); $s=array_column($j["steps"], null, "id"); echo $s["pull-trivy"]["state"],"/",$s["pull-trivy"]["note"]," ",$s["db-trivy"]["state"]," ",$s["scan"]["state"],"/",$s["scan"]["note"]," ",$s["os"]["state"]," ",$s["pkgmatch"]["state"]," ",$s["db-exploit"]["state"]," ",$s["report"]["state"];' "$J")" \
+   = "skipped/already present done skipped/no containers done failed failed done" ] \
+  && ok "step results: image present skipped, DB done, no containers skipped, OS done, failed package match and exploit download recorded as failed" || bad "step results: $J"
+[ "$(php -r '$j=json_decode($argv[1],true); $s=array_column($j["steps"], null, "id"); echo $s["db-trivy"]["bytes"];' "$J")" = 5000000 ] \
+  && ok "db-trivy step keeps the bytes the download wrote (5000000)" || bad "db-trivy bytes: $J"
+grep -q -- "-v $W/osdata/unraid-cve-lens/dl-tmp:/tmp .*--download-db-only" "$W/docker.log" && ok "Trivy DB container: TMPDIR (/tmp) on disk in the data directory, so the download can be measured" || bad "no dl-tmp mount: $(grep download-db-only "$W/docker.log")"
+grep -- '--download-db-only' "$W/docker.log" | grep -q 'docker.sock' && bad "DB container got the Docker socket" || ok "DB container still has no Docker socket"
+[ ! -e "$W/osdata/unraid-cve-lens/dl-tmp" ] && ok "dl-tmp removed after the download" || bad "dl-tmp left behind"
+grep -q '^step2=db-trivy|running|' "$W/snap-steps" 2>/dev/null && grep -q '^step3=pull-grype|waiting|' "$W/snap-steps" \
+  && ok "during the download: \$RUN/steps shows db-trivy running and the later steps waiting" || bad "steps during the run: $(cat "$W/snap-steps" 2>&1)"
+grep -q '^step=db-trivy$' "$W/snap-dl" 2>/dev/null && grep -q '^bytes=5000000$' "$W/snap-dl" && grep -qE '^rate=[0-9]+$' "$W/snap-dl" \
+  && ok "during the download: \$RUN/dl has the step, 5000000 bytes so far and a rate" || bad "download sample: $(cat "$W/snap-dl" 2>&1)"
+grep -q '^unpacked=700000$' "$W/snap-dl" 2>/dev/null && grep -q '^expect=2048000$' "$W/snap-dl" && grep -qE '^urate=[0-9]+$' "$W/snap-dl" \
+  && ok "during the download: the artifact is counted once (Trivy keeps a second copy), the unpacked trivy.db and the size expected from db-sizes are measured" || bad "unpack sample: $(cat "$W/snap-dl" 2>&1)"
+[ ! -e "$W/osrun/steps" ] && [ ! -e "$W/osrun/dl" ] && ! compgen -G "$W/osrun/*.tmp.*" >/dev/null && ok "\$RUN/steps and \$RUN/dl removed when the run ends" || bad "run state left: $(ls "$W/osrun")"
+pgrep -f "$S" >/dev/null && bad "a sampler process outlived the run" || ok "no sampler process left after the run"
+# "stop" during a download: the sampler ends with the run (it used to keep writing $RUN/dl into the next run)
+# (seen on a NAS-like VM: the run's cleanup sat in a slow `docker rm`; here the fake `docker rm` takes longer than
+# stop waits, so the run is KILLed in the middle of its EXIT trap)
+rm -f "$W/osrun/dl"; ( FAKE_DL=1000 FAKE_DL_WAIT=20 UTS_DL_EVERY=1 osrun 'OS_SCAN="no"' 'JAVA_DB="no"' >/dev/null 2>&1 & )
+for _ in $(seq 1 50); do [ -f "$W/osrun/dl" ] && break; sleep 0.2; done
+touch "$W/slow-ps"
+UTS_STOP_WAIT=3 UTS_CFG=$W/os.cfg UTS_DATA=$W/osdata/unraid-cve-lens UTS_RUN=$W/osrun UTS_LOG=$W/os.log bash "$S" stop >/dev/null 2>&1
+rm -f "$W/slow-ps"; sleep 3
+if pgrep -f "$S" >/dev/null; then bad "a sampler outlived a stopped run: $(pgrep -af "$S")"; pkill -f "$S"; else ok "stop during a download: no sampler left"; fi
+[ ! -e "$W/osrun/dl" ] && ok "stop during a download: \$RUN/dl is not written again" || bad "\$RUN/dl rewritten after stop: $(cat "$W/osrun/dl")"
+# a failed run: no vulnerability DB. The failing step carries the reason, the steps after it are skipped, result failed
+FD=$W/faildata/unraid-cve-lens; mkdir -p "$FD"
+printf 'OS_SCAN="no"\nJAVA_DB="no"\nEXPLOIT_DATA="no"\n' >"$W/f.cfg"
+FAKE_DB_FAIL=1 UTS_CFG=$W/f.cfg UTS_DATA=$FD UTS_RUN=$W/frun UTS_LOG=$W/f.log UTS_PLUGIN_DIR=$P UTS_NOTIFY=$W/none bash "$S" run; frc=$?
+J=$(stepf "$FD/report/last-steps")
+[ "$frc" = 1 ] && [ "$(php -r '$j=json_decode($argv[1],true); $s=array_column($j["steps"], null, "id"); echo $j["result"]," ",$s["db-trivy"]["state"],"/",$s["db-trivy"]["note"]," ",$s["scan"]["state"]," ",$s["report"]["state"];' "$J")" \
+   = "failed failed/FATAL fake db failure skipped skipped" ] && grep -q '"note":"not run, the run failed before"' <<<"$J" \
+  && ok "failed run: the failing step has the reason, later steps are skipped (not run), result failed" || bad "failed run steps (rc $frc): $J"
+# update-db: only the database steps
+FAKE_DB_FAIL='' UTS_CFG=$W/f.cfg UTS_DATA=$W/osdata/unraid-cve-lens UTS_RUN=$W/urun UTS_LOG=$W/u.log UTS_PLUGIN_DIR=$P bash "$S" update-db --foreground
+J=$(stepf "$LS")
+[ "$(php -r '$j=json_decode($argv[1],true); echo $j["mode"]," ",$j["result"]," ",implode(",", array_column($j["steps"], "id"));' "$J")" = "update-db ok pull-trivy,db-trivy" ] \
+  && grep -q 'database update [0-9]*-[0-9]* started' "$W/u.log" && ok "update-db: steps are the image and the database only, result ok, start line in the log" || bad "update-db steps: $J"
+# the PHP side: hostile steps/dl files, log tail sanitising and the run-id cut
+HS=$W/hostile-steps; printf '%s\n' 'id=1-2' 'mode=scan' 'started=100' \
+  'step1=db-trivy|running|100|0|0|0|99|<b>lab</b>|n|extra|fields' 'step2=EVIL|done|1|2|0|0|0|x|y' 'step3=scan|pwned|1|2|0|0|0|x|y' \
+  'step4=scan|running|abc|2|3|9|0|Images'$'\x1b''[31m|ok' >"$HS"
+J=$(stepf "$HS")
+[ "$(php -r '$j=json_decode($argv[1],true); echo count($j["steps"])," ",$j["steps"][0]["label"]," ",$j["steps"][0]["note"]," ",$j["steps"][1]["start"]," ",$j["steps"][1]["label"];' "$J")" = "2 <b>lab</b> n|extra|fields 0 Images" ] \
+  && ok "uts_steps: bad id and state dropped, numbers checked, escape codes removed, text left as data" || bad "uts_steps hostile: $J"
+printf '%s\n' 'old line' '2026-11-04 10:00:00 scan 5-6 started (scope=running)' 'a'$'\x1b''[1mbold'$'\x07' 'b' >"$W/t.log"
+T=$(UTS_LOG=$W/t.log php -r 'require $argv[1]; echo json_encode(uts_log_tail(10, 65536, "5-6"));' "$P/include/lib.php")
+[ "$T" = '["2026-11-04 10:00:00 scan 5-6 started (scope=running)","abold","b"]' ] && ok "log tail: starts at this run's start line, escape codes and control characters removed" || bad "log tail: $T"
+seq 1 700 | sed 's/^/line /' >"$W/t.log"
+L=$(UTS_LOG=$W/t.log REQUEST_METHOD=GET php "$P/include/log.php")
+[ "$(grep -c '^line ' <<<"$L")" = 500 ] && grep -q '^line 700$' <<<"$L" && ! grep -q '^line 200$' <<<"$L" && ok "log.php: the last 500 lines" || bad "log.php lines: $(grep -c '^line ' <<<"$L")"
+grep -q '\$_GET\|\$_POST\|\$_REQUEST' "$P/include/log.php" && bad "log.php reads request parameters" || ok "log.php takes no request parameters (fixed file)"
+
 # ---------------------------------------------------------------- aggregate on fixture Trivy JSON
 php "$HERE/tests/aggregate-test.php" "$HERE" || fail=1
+command -v node >/dev/null && { node "$HERE/tests/export-test.js" || fail=1; } || echo "FAIL node not found: CSV export test not run"
 php "$HERE/tests/osinventory-test.php" "$HERE" || fail=1
+php "$HERE/tests/ignore-test.php" "$HERE" || fail=1
 grep -c 'GRYPE_IMAGE=' "$S" | grep -qx 1 && ! grep -rq 'anchore/grype:' "$P" --include=*.php --include=*.page && ok "the Grype image is named in exactly one place" || bad "Grype image named in more than one place"
 
 # Every literal status message must survive clean() (scripts/cve-lens), which turns any other character into '?':

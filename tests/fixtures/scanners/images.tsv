@@ -1,0 +1,3 @@
+1	sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa	example/web:1.2	example/web:1.2	0	example/web@sha256:1111111111111111111111111111111111111111111111111111111111111111	web,web-worker	
+2	sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb	example/db:2 (running older image bbbbbbbbbbbb)	example/db:2	1	example/db@sha256:2222222222222222222222222222222222222222222222222222222222222222	db	
+3	sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc	image cccccccccccc		0		big	container was created from an image ID

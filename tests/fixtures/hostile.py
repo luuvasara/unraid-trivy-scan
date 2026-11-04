@@ -39,9 +39,13 @@ osdoc = {"SchemaVersion": 2, "ArtifactType": "filesystem", "Results": [{"Target"
     {"VulnerabilityID": "CVE-2024-0101", "Severity": "HIGH", "PkgName": "axios", "InstalledVersion": "1.0",
      "FixedVersion": "1.1", "PkgPath": P[2] + mark('ospath'), "Title": "t"}]}]}
 json.dump(osdoc, open(out + '/work/os/os.json', 'w'))
-open(out + '/work/os/result', 'w').write('result=ok\nerror=\nversion=7.3.4\nkernel=' + mark('kernel') + '\n')
+open(out + '/work/os/result', 'w').write('result=ok\nerror=\nversion=7.3.4\nkernel=' + mark('kernel') + '\npkg_result=failed\npkg_error=' + mark('pkgerr') + '\n')
 open(out + '/work/os/packages.txt', 'w').write(P[0] + mark('ospkg') + '-1.0-x86_64-1\n' + 'bash-5.3-x86_64-1\n')
 open(out + '/cfg', 'w').write('SCHEDULE="' + P[1] + mark('cfg') + '"\nSCOPE="all"\nSHOW_TAB="yes"\nPATH="/evil"\n')
 open(out + '/run/progress', 'w').write('phase=scan\ndone=1\ntotal=2\ncurrent=' + P[0] + mark('current') + '\n')
 open(out + '/data/report/last-run', 'w').write('result=failed\nended=1767225600\nmessage=' + P[2] + mark('lastrun') + '\n')
 open(out + '/varini', 'w').write('csrf_token="0123456789ABCDEF"\n')
+
+open(out + '/work/posture.jsonl', 'w').write(json.dumps(
+    ['a' * 64, 'sha256:' + 'e' * 64, '/' + P[1] + mark('pname'), True, 'host', 'host', ['SYS_ADMIN', P[0]], [{}], '', 'CMD',
+     ['/var/run/docker.sock:/x'], [], {'80/tcp': [{'HostIp': '', 'HostPort': '8080'}]}, False, P[2] + ':latest']) + '\n')
