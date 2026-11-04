@@ -531,6 +531,11 @@ bad_msgs=$(grep -oE 'last_run [a-z]+ "[^"$]*"' "$S" | sed -E 's/^last_run [a-z]+
 [ -z "$bad_msgs" ] && ok "status messages contain only characters clean() keeps" || bad "status messages clean() would mangle: $bad_msgs"
 
 # keep-old-begin
+# ---------------------------------------------------------------- credit
+grep -q 'Thanks to \[Xaero\](https://forums.unraid.net/profile/84375-xaero/)' "$HERE/README.md" \
+  && grep -q '\[trivy-scan plugin\](https://forums.unraid.net/topic/200976-cvssv4-92-php-vulnerability/#comment-1640131)' "$HERE/README.md" \
+  && ok "README credits Xaero with links to the profile and the original post (trivy-scan, not renamed)" || bad "README credit line"
+
 # ---------------------------------------------------------------- Community Apps files
 CA=$HERE/plugins/unraid-cve-lens.xml
 php -r '$d=new DOMDocument(); exit($d->load($argv[1]) && $d->load($argv[2]) ? 0 : 1);' "$CA" "$HERE/ca_profile.xml" 2>/dev/null && ok "CA plugin wrapper and ca_profile.xml are well-formed XML" || bad "CA XML does not parse"
