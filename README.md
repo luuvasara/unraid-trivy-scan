@@ -467,7 +467,8 @@ release files in `tests/e2e.sh`, so the number of findings it gives there is not
 
 ## Thanks
 
-Thanks to Xaero for the original cve-lens plugin on the Unraid forums, which this one is built on.
+Thanks to [Xaero](https://forums.unraid.net/profile/84375-xaero/) for the original [trivy-scan plugin](https://forums.unraid.net/topic/200976-cvssv4-92-php-vulnerability/#comment-1640131) <!-- keep-old-name -->
+posted on the Unraid forums, which this one is built on.
 
 ## License
 
