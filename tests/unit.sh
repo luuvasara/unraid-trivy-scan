@@ -339,7 +339,7 @@ mkdir -p "$W/victim3"; touch "$W/victim3/keep"; ln -s "$W/victim3" "$OSD/exploit
 FAKE_EXPLOIT=$XF osrun 'OS_SCAN="no"' 'JAVA_DB="no"'
 [ -e "$W/victim3/keep" ] && [ ! -e "$W/victim3/kev.json" ] && ! grep -q -- '-exploit ' "$W/docker.log" && ok "a symlink in place of the exploit directory is not followed" || bad "followed an exploit symlink: $(ls "$W/victim3")"
 rm -f "$OSD/exploit"
-# RPM base (Unraid 8 / Fedora): no pkgtools, an RPM database and rpm(8)
+# RPM base (Fedora): no pkgtools, an RPM database and rpm(8)
 rm -rf "$OR/var/lib/pkgtools"; mkdir -p "$OR/usr/lib/sysimage/rpm"
 printf '#!/bin/sh\necho "rpm $*" >>%s/rpm.log\ncase "$*" in *CHANGELOGTEXT*) cat %s ;; *) cat %s ;; esac\n' "$W" \
   "$HERE/tests/fixtures/osinv/rpm/rpm-changelog.txt" "$HERE/tests/fixtures/osinv/rpm/rpm.tsv" >"$W/bin/fake-rpm"; chmod 755 "$W/bin/fake-rpm"

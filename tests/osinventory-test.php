@@ -40,7 +40,7 @@ $out = run($inv, [$s, $map]);
 t(strpos($out, "packages=5\n") !== false && strpos((string)file_get_contents("$s/os.cdx.json"), 'linux_kernel') === false, "no kernel= -> kernel not matched");
 t(!file_exists("$s/patched.tsv"), "Slackware: no patched.tsv (no changelogs)");
 
-// ---- RPM (Unraid 8, Fedora base)
+// ---- RPM (Fedora base)
 $p = "$w/rpm"; fresh($p, ["$fx/rpm/rpm.tsv" => 'rpm.tsv', "$fx/rpm/rpm-changelog.txt" => 'rpm-changelog.txt']);
 $out = run($inv, [$p, $map, "$w/none.txt"]);
 t(strpos($out, "base=rpm\n") !== false && strpos($out, "packages=4\n") !== false && strpos($out, "mapped=3\n") !== false,
