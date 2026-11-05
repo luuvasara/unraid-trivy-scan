@@ -42,6 +42,10 @@ case " \$* " in *" sbom:/in/os.cdx.json "*)
   for a in "\$@"; do case "\$a" in *:/in/os.cdx.json:ro) cp "\${a%:/in/os.cdx.json:ro}" "$W/last-sbom.json" ;; esac; done
   [ -n "\${FAKE_GRYPE_FAIL:-}" ] && { echo "ERROR fake grype failure" >&2; exit 1; }
   cat "$W/grype.json" 2>/dev/null || echo '{"matches":[]}' ;; esac
+case " \$* " in *" --image-src remote "*)   # "Scan an image": FAKE_IMG_JSON=<file> answers with that Trivy JSON, FAKE_IMG_ERR=<text> fails
+  [ -n "\${FAKE_IMG_SLEEP:-}" ] && sleep "\$FAKE_IMG_SLEEP"
+  [ -n "\${FAKE_IMG_ERR:-}" ] && { echo "\$FAKE_IMG_ERR" >&2; exit "\${FAKE_IMG_RC:-1}"; }
+  [ -n "\${FAKE_IMG_JSON:-}" ] && cat "\$FAKE_IMG_JSON" ;; esac
 exit 0
 EOF
 chmod 755 "$W/bin/docker"
@@ -378,9 +382,18 @@ printf '#!/bin/sh\nexit 1\n' >"$W/bin/docker-down"; MISSING=$W/not-mounted/appda
 PATH="$W/bin:$PATH" UTS_DATA=$MISSING/unraid-cve-lens UTS_RUN=$W/run-miss UTS_LOG=$W/miss.log UTS_CFG=$W/none.cfg bash "$S" run
 RC=$?
 [ "$RC" = 1 ] && [ ! -e "$W/not-mounted" ] && grep -q 'does not exist' "$W/miss.log" && ok "missing appdata parent: scan refuses (rc 1), logs why, creates nothing" || bad "missing parent: rc=$RC, $(ls "$W/not-mounted" 2>&1), $(cat "$W/miss.log" 2>&1)"
+grep -q '^result=failed' "$W/run-miss/last-run" && grep -q 'The array is stopped, or the Docker appdata location is not available' "$W/run-miss/last-run" && ok "missing appdata parent: the failure is kept in the run directory, so the page shows it" || bad "missing parent: no run/last-run"
 FDOCK=$W/bin2; mkdir -p "$FDOCK"; printf '#!/bin/sh\nexit 1\n' >"$FDOCK/docker"; chmod 755 "$FDOCK/docker"
 PATH="$FDOCK:$PATH" UTS_DATA=$MISSING/unraid-cve-lens UTS_RUN=$W/run-miss UTS_LOG=$W/miss.log UTS_CFG=$W/none.cfg bash "$S" run
 [ ! -e "$W/not-mounted" ] && ok "Docker down AND appdata missing: still nothing created (array-stopped cron run)" || bad "created $W/not-mounted"
+MSG_SH=$(sed -n "s/^MSG_DOCKER='\(.*\)'$/\1/p" "$S"); MSG_PHP=$(php -r "require '$P/include/lib.php'; echo UTS_MSG_DOCKER;")
+[ -n "$MSG_SH" ] && [ "$MSG_SH" = "$MSG_PHP" ] && ok "Docker message: script and page say the same" || bad "Docker message differs: [$MSG_SH] [$MSG_PHP]"
+M1=$(UTS_DATA=$MISSING/unraid-cve-lens UTS_RUN=$W/run-miss UTS_LOG=$W/miss.log UTS_CFG=$W/none.cfg bash -c 'source <(sed -n "/^msg_appdata()/p" "$0"); DATA=$UTS_DATA; msg_appdata' "$S"); M2=$(UTS_DATA=$MISSING/unraid-cve-lens php -r "require '$P/include/lib.php'; echo uts_msg_appdata();")
+[ -n "$M1" ] && [ "$M1" = "$M2" ] && ok "appdata message: script and page say the same" || bad "appdata message differs: [$M1] [$M2]"
+# Docker stopped, the data directory is there: the failure with the instruction is in last-run, and a later good run clears a tmpfs note
+DD=$W/dockerdown/unraid-cve-lens; mkdir -p "$DD"
+PATH="$FDOCK:$PATH" UTS_DATA=$DD UTS_RUN=$W/run-dd UTS_LOG=$W/dd.log UTS_CFG=$W/none.cfg bash "$S" run; RC=$?
+[ "$RC" = 1 ] && grep -qxF "message=$MSG_SH" "$DD/report/last-run" && ok "Docker stopped: last-run says how to start it" || bad "Docker stopped: rc=$RC $(cat "$DD/report/last-run" 2>&1)"
 grep -q 'uts_path(.data.))' "$P/CveLensSettings.page" && ! grep -q '<code>/mnt/user/appdata' "$P/CveLensSettings.page" && ok "settings page shows the real data directory" || bad "settings page hard-codes the data path"
 
 # ---------------------------------------------------------------- the report step runs out of memory
@@ -541,6 +554,162 @@ bad_msgs=$(grep -oE 'last_run [a-z]+ "[^"$]*"' "$S" | sed -E 's/^last_run [a-z]+
 [ -z "$bad_msgs" ] && ok "status messages contain only characters clean() keeps" || bad "status messages clean() would mangle: $bad_msgs"
 
 # keep-old-begin
+# ---------------------------------------------------------------- scan an image
+# The reference is checked with the same rules in PHP and bash (tests/fixtures/image-refs.txt, default deny), the scan runs
+# the pinned Trivy with --image-src remote in the "remote" role (no socket), keeps its result apart from the full scan's
+# report, and the command the page shows is the argument list the run really used.
+php_ref() { php -r 'require $argv[1]; echo uts_image_ref_valid($argv[2]) ? "1" : "0";' "$P/include/lib.php" "$1"; }
+IM=$W/img; rm -rf "$IM"; mkdir -p "$IM/data/cache/db" "$IM/data/report" "$IM/run" "$IM/flash"
+printf 'x' >"$IM/data/cache/db/trivy.db"; printf '{"UpdatedAt":"2026-11-05T07:00:54.9Z","NextUpdate":"2026-11-06T07:00:54Z"}' >"$IM/data/cache/db/metadata.json"
+printf 'JAVA_DB="no"\nOS_SCAN="no"\n' >"$IM/flash/cfg"
+imres() { find "$IM/data/image-scan" -mindepth 1 -maxdepth 1 -type d -name '[0-9]*-[0-9]*' 2>/dev/null | sort; }
+imenv() { env UTS_DATA="$IM/data" UTS_RUN="$IM/run" UTS_LOG="$IM/log" UTS_CFG="$IM/flash/cfg" UTS_PLUGIN_DIR="$P" UTS_NOTIFY="$IM/notify" "$@"; }
+sh_ref() { imenv bash "$S" scan-image-cmd "$1" >/dev/null 2>&1; case $? in 0) echo 1 ;; *) echo 0 ;; esac; }
+nref=0; refbad=0
+while IFS='|' read -r want ref; do
+  case $want in 0|1) ;; *) continue ;; esac
+  a=$(sh_ref "$ref"); b=$(php_ref "$ref"); nref=$((nref + 1))
+  if [ "$a" != "$want" ] || [ "$b" != "$want" ]; then bad "image reference '${ref:0:60}': want $want, bash $a, php $b"; refbad=1; fi
+done <"$HERE/tests/fixtures/image-refs.txt"
+[ "$refbad" = 0 ] && ok "$nref image references: bash and PHP give the grammar's answer (valid, default deny)"
+for ref in $'postgres:17\nid' $'postgres:17\n' $'\npostgres' $'postgres\r' $'post\x01gres'; do
+  [ "$(sh_ref "$ref")" = 0 ] && [ "$(php_ref "$ref")" = 0 ] && ok "image reference with a newline or control character refused (bash and PHP): $(printf %q "$ref")" || bad "control character accepted: $(printf %q "$ref")"
+done
+[ "$(php -r 'require $argv[1]; echo uts_image_ref_valid("post\0gres") ? 1 : 0;' "$P/include/lib.php")" = 0 ] && ok "NUL byte refused (PHP)" || bad "NUL accepted"
+# classic wrong inputs get a plain explanation (and are still refused)
+prob() { php -r 'require $argv[1]; echo uts_image_ref_problem($argv[2]);' "$P/include/lib.php" "$1"; }
+expect_problem() {   # expect_problem <regex in the message> <input>
+  local m; m=$(prob "$2")
+  grep -qiE "$1" <<<"$m" && [ "$(php_ref "$2")" = 0 ] && ok "wrong input explained: $(printf %q "${2:0:50}") -> ${m:0:70}..." || bad "wrong input '${2:0:50}': message '$m'"
+}
+expect_problem 'project page' https://github.com/linuxserver/docker-sonarr
+expect_problem 'project or catalog page' github.com/linuxserver/docker-sonarr
+expect_problem 'web address' 'https://ca.unraid.net/apps?q=sonarr'
+expect_problem 'web address' https://unraid.net/community/apps
+expect_problem 'XML' '<Container version="2"><Repository>lscr.io/linuxserver/sonarr</Repository></Container>'
+expect_problem 'compose' $'services:\n  web:\n    image: postgres:17'
+expect_problem 'compose' 'image: postgres:17'
+expect_problem 'spaces' 'Sonarr TV'
+expect_problem 'spaces' 'docker pull postgres:17'
+expect_problem 'lower case' Sonarr
+expect_problem 'cannot start' -rm
+expect_problem 'files or local archives' docker-archive:/tmp/x.tar
+expect_problem 'too long' "$(printf 'a%.0s' $(seq 301))"
+expect_problem 'Enter an image reference' ''
+[ -z "$(prob postgres:17)" ] && [ -z "$(prob sonarr)" ] && ok "valid references (including a bare word) give no problem message" || bad "valid reference reported as a problem"
+
+# a scan of a tiny image through the fake docker
+: >"$W/docker.log"; : >"$IM/log"
+printf 'old report\n' >"$IM/data/report/report.json"; printf '{"generated":1}\n' >"$IM/data/report/history.jsonl"; printf 'result=ok\nended=1\nmessage=old\n' >"$IM/data/report/last-run"
+printf 'CVE-2024-0001 *\n' >"$IM/flash/ignore.txt"
+fp() { (cd "$IM/data" && md5sum report/* ../flash/ignore.txt | md5sum); }
+before=$(fp)
+FAKE_IMG_JSON=$HERE/tests/fixtures/image-scan/trivy.json imenv bash "$S" scan-image-run 'alpine:3.19'; rc=$?
+res=$(imres | head -1)
+[ "$rc" = 0 ] && [ -s "$res/report.json" ] && [ -s "$res/meta" ] && [ -s "$res/cmd" ] && ok "image scan: result stored under image-scan/<id> (report.json, meta, cmd)" || bad "image scan rc=$rc: $(tail -3 "$IM/log"); $(imres)"
+[ "$before" = "$(fp)" ] && [ ! -e "$IM/notify" ] && ok "image scan leaves report.json, history, last-run, the ignore list alone and sends no notification" || bad "image scan changed the full scan's files"
+php -r '$j=json_decode(file_get_contents($argv[1]),true); exit($j["summary"]["total"]===2 && $j["image_scan"]["ref"]==="alpine:3.19" && strpos($j["image_scan"]["digests"][0],"@sha256:b")!==false && $j["changes"]===null && $j["trend"]===[] ? 0 : 1);' "$res/report.json" \
+  && ok "result: 2 CVEs, image_scan (reference, digest), no trend or \"since the last scan\"" || bad "result content: $(head -c 300 "$res/report.json")"
+[ -z "$(find "$IM/data/image-scan" -name 'history.jsonl')" ] && ok "no history.jsonl written for an image scan" || bad "history.jsonl written"
+grep -q '^result=ok' "$IM/data/image-scan/last" && grep -q "^id=$(basename "$res")$" "$IM/data/image-scan/last" && ok "image-scan/last records the attempt" || bad "last: $(cat "$IM/data/image-scan/last")"
+RL=$(grep -- '--image-src remote' "$W/docker.log" | head -1)
+[ "$(grep -c -- '--image-src remote' "$W/docker.log")" = 1 ] && grep -q '^docker run --rm ' <<<"$RL" && grep -q 'unraid-cve-lens.role=remote' <<<"$RL" && ok "image scan: one container, the remote role" || bad "container: $RL"
+! grep -q 'docker.sock' <<<"$RL" && ! grep -q -- '--network none' <<<"$RL" && grep -q -- '--cap-drop ALL' <<<"$RL" && grep -q -- '--security-opt no-new-privileges' <<<"$RL" && grep -q ':/cache:ro' <<<"$RL" \
+  && ok "remote role: network, no Docker socket, database read-only, hardened" || bad "remote role flags: $RL"
+grep -Eq -- ' -- alpine:3.19$' <<<"$RL" && grep -q -- '--offline-scan' <<<"$RL" && grep -q -- '--skip-db-update' <<<"$RL" && grep -q -- '--scanners vuln' <<<"$RL" && grep -q 'aquasec/trivy:0.76.1@sha256:' <<<"$RL" \
+  && ok "pinned Trivy, offline database, reference is the last argument after --" || bad "trivy args: $RL"
+grep -qE '^docker (pull|image pull|create|load|import)' "$W/docker.log" && bad "an image scan pulled or created something: $(grep -E '^docker (pull|create)' "$W/docker.log")" || ok "no docker pull, create or load for the scanned image"
+! grep -q 'grype' "$W/docker.log" && ok "no Grype in an image scan" || bad "Grype used"
+# the displayed command is the argument list the run used
+norm() { sed 's/^docker run //; s/[0-9]\{10\}-[0-9]\{1,9\}/RUNID/g'; }
+shown() { awk '{ i = index($0, "="); k = substr($0, 1, i - 1); if (k == "docker" || k == "image" || k == "trivy") printf "%s ", substr($0, i + 1) }' | sed 's/ $//'; }
+SHOWN=$(imenv bash "$S" scan-image-cmd 'alpine:3.19' | shown)
+[ "$SHOWN" = "$(norm <<<"$RL")" ] && ok "scan-image-cmd shows exactly the arguments the run passed to docker" || bad "shown differs from run: [$SHOWN] vs [$(norm <<<"$RL")]"
+[ "$(shown <"$res/cmd" | sed 's/[0-9]\{10\}-[0-9]\{1,9\}/RUNID/g')" = "$(norm <<<"$RL")" ] && ok "the command stored with the result is the one that ran" || bad "stored cmd: $(cat "$res/cmd")"
+php -r 'require $argv[1]; $c = uts_image_cmd_parse(file_get_contents($argv[2])); exit($c && $c["image"] === "aquasec/trivy:0.76.1@sha256:790fd66d1697395d8693d1acaa1ea702406a20f109b6fc7bac8db623eca6c06c" && end($c["trivy"]) === "alpine:3.19" && $c["logins"] === "no" ? 0 : 1);' "$P/include/lib.php" "$res/cmd" \
+  && ok "include/lib.php parses the stored command (pinned Trivy image included)" || bad "uts_image_cmd_parse"
+# registry logins: mounted for the run only with the setting, never part of the displayed command
+printf 'x' >"$IM/auth.json"
+printf 'JAVA_DB="no"\nOS_SCAN="no"\nREGISTRY_AUTH="yes"\n' >"$IM/flash/cfg"; : >"$W/docker.log"
+FAKE_IMG_JSON=$HERE/tests/fixtures/image-scan/trivy.json imenv env UTS_REG_AUTH="$IM/auth.json" bash "$S" scan-image-run 'alpine:3.19'
+RL2=$(grep -- '--image-src remote' "$W/docker.log" | head -1)
+CMD2=$(imenv env UTS_REG_AUTH="$IM/auth.json" bash "$S" scan-image-cmd 'alpine:3.19')
+grep -q "$IM/auth.json:/root/.docker/config.json:ro" <<<"$RL2" && ! grep -q 'auth.json\|config.json' <<<"$CMD2" && grep -q '^logins=yes$' <<<"$CMD2" \
+  && [ "$(shown <<<"$CMD2")" = "$(norm <<<"$RL2" | sed "s# -v $IM/auth.json:/root/.docker/config.json:ro##")" ] \
+  && ok "REGISTRY_AUTH=yes: login file mounted read-only in the run, shown only as logins=yes in the command" || bad "logins: run [$RL2] shown [$CMD2]"
+printf 'JAVA_DB="no"\nOS_SCAN="no"\n' >"$IM/flash/cfg"; : >"$W/docker.log"
+FAKE_IMG_JSON=$HERE/tests/fixtures/image-scan/trivy.json imenv env UTS_REG_AUTH="$IM/auth.json" bash "$S" scan-image-run 'alpine:3.19'
+! grep -q 'config.json' "$W/docker.log" && ok "logins off (default): the login file is not mounted" || bad "login file mounted with REGISTRY_AUTH=no"
+# keep the last IMG_KEEP results, oldest removed
+for i in 1 2 3 4 5 6 7; do sleep 1; FAKE_IMG_JSON=$HERE/tests/fixtures/image-scan/trivy.json imenv bash "$S" scan-image-run "alpine:3.$i"; done
+[ "$(imres | wc -l)" = 5 ] && ! grep -rqx 'ref=alpine:3.1' "$IM"/data/image-scan/*/meta && ok "only the newest 5 results are kept (oldest removed)" || bad "kept: $(imres)"
+# failures: Trivy's reason in plain words, recorded as the last attempt, no result stored, full scan files untouched
+n0=$(imres | wc -l)
+while IFS='|' read -r err want; do
+  FAKE_IMG_ERR=$err imenv bash "$S" scan-image-run 'x/y:1'; rc=$?
+  m=$(sed -n 's/^message=//p' "$IM/data/image-scan/last")
+  [ "$rc" = 1 ] && grep -q '^result=failed' "$IM/data/image-scan/last" && grep -qi "$want" <<<"$m" && ok "failure '${err:0:40}': $m" || bad "failure '$err': rc=$rc message='$m'"
+done <<'EOF'
+FATAL scan error: GET https://index.docker.io/v2/x/y/manifests/1: MANIFEST_UNKNOWN: manifest unknown|not found in the registry
+FATAL GET https://index.docker.io/v2/x/y/manifests/1: UNAUTHORIZED: authentication required|private, or the name is wrong
+FATAL GET https://index.docker.io/v2/x/y/manifests/1: TOOMANYREQUESTS: You have reached your pull rate limit|rate limit
+FATAL Get https://registry.example/v2/: dial tcp: lookup registry.example: no such host|could not be reached
+EOF
+grep -q 'Trivy said: .*no such host' "$IM/log" && ! grep -q 'Trivy' <<<"$m" && ok "failure: plain words on the page, Trivy's own line in the log" || bad "failure: Trivy line: '$m'"
+FAKE_IMG_ERR="context deadline exceeded" imenv bash "$S" scan-image-run 'x/y:1'; grep -q 'timed out' "$IM/data/image-scan/last" && ok "timeout: reported as timed out" || bad "timeout message: $(cat "$IM/data/image-scan/last")"
+[ "$(imres | wc -l)" = "$n0" ] && [ "$before" = "$(fp)" ] && ok "failed image scans store no result and leave the full scan's files alone" || bad "failure side effects"
+# hostile references never reach docker
+: >"$W/docker.log"
+for ref in '--help' 'postgres;touch PWNIMG' '$(touch PWNIMG)' 'file:/etc/passwd' 'docker-archive:/x.tar' 'a b'; do
+  imenv bash "$S" scan-image "$ref" >/dev/null 2>&1; rc1=$?; imenv bash "$S" scan-image-run "$ref" >/dev/null 2>&1; rc2=$?
+  [ "$rc1" = 2 ] && [ "$rc2" = 2 ] && ok "scan-image refuses '$ref' (exit 2)" || bad "scan-image '$ref': $rc1 $rc2"
+done
+grep -q 'docker run' "$W/docker.log" && bad "docker ran for a refused reference" || ok "no container for refused references"
+[ ! -e "$W/PWNIMG" ] && [ ! -e "$IM/PWNIMG" ] && [ ! -e PWNIMG ] && ok "no command substitution ran for hostile references" || bad "a hostile reference ran a command"
+# no database: plain words, no download, nothing run
+mv "$IM/data/cache/db/trivy.db" "$IM/trivy.db.hold"; : >"$W/docker.log"
+out=$(imenv bash "$S" scan-image 'alpine:3.19'); rc=$?
+[ "$rc" = 4 ] && grep -q 'run a first scan from Settings' <<<"$out" && ok "no database: exit 4, \"$out\"" || bad "no database: rc=$rc $out"
+imenv bash "$S" scan-image-run 'alpine:3.19'; grep -q 'first scan from Settings' "$IM/data/image-scan/last" && ! grep -qE 'docker (run|pull)' "$W/docker.log" && ok "no database: the run says so and downloads nothing" || bad "no database run: $(cat "$IM/data/image-scan/last"); $(cat "$W/docker.log")"
+printf 'JAVA_DB="no"\nOS_SCAN="no"\nTRIVY_DB_KEEP="no"\n' >"$IM/flash/cfg"
+out=$(imenv bash "$S" scan-image 'alpine:3.19'); rc=$?
+[ "$rc" = 4 ] && grep -q 'TRIVY_DB_KEEP=no' <<<"$out" && grep -q 'Download for every scan' <<<"$out" && ok "no database with TRIVY_DB_KEEP=no: the message names the setting" || bad "no database, keep=no: rc=$rc $out"
+printf 'JAVA_DB="no"\nOS_SCAN="no"\n' >"$IM/flash/cfg"
+mv "$IM/trivy.db.hold" "$IM/data/cache/db/trivy.db"
+# one at a time, and never together with a full scan
+bash -c 'exec -a cve-lens-busy sleep 30' & BUSY=$!; echo $BUSY >"$IM/run/pid"
+out=$(imenv bash "$S" scan-image 'alpine:3.19'); rc=$?
+[ "$rc" = 3 ] && grep -q 'already running' <<<"$out" && ok "scan-image while a scan runs: exit 3, \"$out\"" || bad "busy: rc=$rc $out"
+kill "$BUSY" 2>/dev/null; rm -f "$IM/run/pid"
+( exec 9>"$IM/run/lock"; flock -n 9; imenv bash "$S" scan-image-run 'alpine:3.19' >/dev/null 2>&1; echo $? >"$IM/busyrc" )
+[ "$(cat "$IM/busyrc")" = 3 ] && ok "the run takes the same lock as a full scan (exit 3 when held)" || bad "lock: $(cat "$IM/busyrc")"
+# the data directory cannot be written (seen on a share whose only pool was removed: mkdir says "No medium found"): a refused
+# start and a failed run are both visible, never a silent "Ready"
+mv "$IM/data/image-scan" "$IM/image-scan.hold"; printf 'x' >"$IM/data/image-scan"
+out=$(imenv bash "$S" scan-image 'alpine:3.19'); rc=$?
+[ "$rc" = 5 ] && grep -q 'cannot write to' <<<"$out" && ok "data directory not writable: exit 5, \"$out\"" || bad "not writable: rc=$rc $out"
+grep -q '^result=failed' "$IM/run/image-last" && grep -qx 'ref=alpine:3.19' "$IM/run/image-last" && grep -q 'cannot write to' "$IM/run/image-last" \
+  && ok "data directory not writable: the refused start is recorded, so the page drops the previous result" || bad "not writable, start: $(cat "$IM/run/image-last" 2>&1)"
+rm -f "$IM/run/image-last"
+imenv bash "$S" scan-image-run 'alpine:3.19' >/dev/null 2>&1; rc=$?
+[ "$rc" = 1 ] && grep -q '^result=failed' "$IM/run/image-last" && grep -q 'cannot write to' "$IM/run/image-last" && ok "data directory not writable: the run records the failure in the run directory" || bad "not writable, run: rc=$rc $(cat "$IM/run/image-last" 2>&1)"
+rm -f "$IM/data/image-scan"; mv "$IM/image-scan.hold" "$IM/data/image-scan"
+UTS_DATA=$IM/data UTS_RUN=$IM/run php -r 'require $argv[1]; $l=uts_image_last(); exit($l["result"]==="failed" && strpos($l["message"],"cannot write to")===0 ? 0 : 1);' "$P/include/lib.php" \
+  && ok "uts_image_last: the newer attempt from the run directory wins over an older image-scan/last" || bad "uts_image_last: run directory attempt not shown"
+FAKE_IMG_JSON=$HERE/tests/fixtures/image-scan/trivy.json imenv bash "$S" scan-image-run 'alpine:3.20'
+[ ! -e "$IM/run/image-last" ] && grep -q '^result=ok' "$IM/data/image-scan/last" && ok "the next attempt that can write removes the run directory's note" || bad "image-last left behind"
+# stop: the existing stop ends an image scan, recorded as the image scan's own last attempt
+rm -f "$IM/data/report/last-run"
+FAKE_IMG_SLEEP=8 FAKE_IMG_JSON=$HERE/tests/fixtures/image-scan/trivy.json imenv bash "$S" scan-image 'alpine:3.19' >/dev/null
+for _ in $(seq 40); do grep -q '^phase=image' "$IM/run/progress" 2>/dev/null && break; sleep 0.25; done
+grep -q '^phase=image' "$IM/run/progress" && ok "a running image scan shows phase=image" || bad "progress: $(cat "$IM/run/progress" 2>&1)"
+imenv env UTS_STOP_WAIT=10 bash "$S" stop >/dev/null
+grep -q '^result=stopped' "$IM/data/image-scan/last" && [ ! -e "$IM/data/report/last-run" ] && ok "stop: image scan recorded as stopped, the full scan's last-run untouched" || bad "stop: $(cat "$IM/data/image-scan/last"); $(ls "$IM/data/report")"
+# the endpoint answers from those files
+UTS_DATA=$IM/data UTS_RUN=$IM/run php -r '$_GET=[]; ob_start(); include $argv[1]; $j=json_decode(ob_get_clean(),true);
+  exit($j["running"]===false && count($j["results"])===5 && $j["db"]["ok"]===true && $j["db"]["updated"]==="2026-11-05T07:00:54Z" && $j["last"]["result"]==="stopped" ? 0 : 1);' "$P/include/image.php" \
+  && ok "image.php: state, 5 results, database date" || bad "image.php state"
+
 # ---------------------------------------------------------------- credit
 grep -q 'Thanks to \[Xaero\](https://forums.unraid.net/profile/84375-xaero/)' "$HERE/README.md" \
   && grep -q '\[trivy-scan plugin\](https://forums.unraid.net/topic/200976-cvssv4-92-php-vulnerability/#comment-1640131)' "$HERE/README.md" \

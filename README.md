@@ -7,6 +7,9 @@ targets could not be scanned and why. For the OS, read [what the OS scan covers]
 Trivy cannot check Unraid's own Slackware packages, so they are matched against NVD's CPE data with Grype instead,
 which works the same way on the coming Fedora-based Unraid 8.
 
+The plugin itself is a page and a script. The scanners run as short-lived Docker containers, so Docker must be
+running. Nothing stays running between scans.
+
 | Report (light theme) | Report, one CVE expanded (dark theme) |
 |---|---|
 | ![Report, light theme](docs/screenshots/report-light.png) | ![Expanded CVE row, dark theme](docs/screenshots/report-expanded-dark.png) |
@@ -27,7 +30,7 @@ Plugins, Install Plugin, paste:
 https://raw.githubusercontent.com/luuvasara/unraid-cve-lens/main/unraid-cve-lens.plg
 ```
 
-Requires Unraid 6.12 or later. Nothing is scanned or downloaded at install time or at boot. Open
+Requires Unraid 6.12 or later, with Docker enabled and the array started. Nothing is scanned or downloaded at install time or at boot. Open
 **Settings, CVE Lens** and press **Scan now**, or set a schedule.
 
 The first scan downloads the pinned Trivy image (about 60 MB) and the vulnerability database (about 1.6 GB on
@@ -108,6 +111,8 @@ You can also install CVE Lens directly and remove the old entry by hand; the sam
 - End-of-life base images: an image whose base OS release is end of life (Trivy's `Metadata.OS.EOSL`) gets an
   "End of life base" badge in the scanned-targets table: that release gets no more security fixes, so findings may
   show "no fix" for that reason.
+- Scan an image: type an image reference (`lscr.io/linuxserver/sonarr:latest`, `postgres:17`) on its own tab and get the
+  vulnerability report for it from the registry, without installing, pulling or running it. See [Scan an image](#scan-an-image).
 - Dashboard tile, optional header tab, Unraid notification when new fixable critical CVEs appear, and when a CVE on
   the KEV list newly affects a container image.
 - Follows the active Unraid theme (black, white, gray, azure) through the theme's CSS variables.
@@ -122,6 +127,7 @@ You can also install CVE Lens directly and remove the old entry by hand; the sam
 | Database download (also the exploit data download) | yes | **no** | read-write (the exploit data download gets only its own folder) | no |
 | Local image scan | **none** (`--network none`) | yes, needed to read local images | read-only | **never** |
 | Registry check (optional) | yes | **no** | read-only | only with "Use registry logins" |
+| Scan an image (one image typed on the "Scan an image" tab; the same role as the registry check) | yes | **no** | read-only | only with "Use registry logins" |
 | Unraid OS scan (optional, on by default) | **none** (`--network none`) | **no** | read-only | **never** |
 | OS package match, Grype (with the OS scan, on by default) | **none** (`--network none`, `--read-only`) | **no** | read-only | **never** |
 
@@ -211,6 +217,65 @@ nothing. Per CVE the report has `kev` (`{added, ransomware}` or `null`), `epss` 
 when there is no score). A CVE that newly appears on the KEV list and affects a container image triggers the
 notification; OS findings (Trivy or NVD CPE matches) do not, and nothing is "new" when the previous report had no
 KEV data. Turn all of this off with `EXPLOIT_DATA=no`.
+
+## Scan an image
+
+The **Scan an image** tab (Settings, CVE Lens, and Vulnerabilities when the header tab is on) scans one image straight from
+its registry and shows the same kind of table as the report: severity, package, fix, exploit data (KEV, EPSS) when the
+local files exist. Use it to look at an app before you install it. Nothing is installed or started, and nothing is
+pulled into Docker: after a scan `docker images` shows no new image (only the pinned Trivy image, if it was missing).
+
+**What to enter.** An image reference, `registry/owner/name:tag`. Four things are easy to mix up:
+
+- A **Docker image** is what gets scanned: `lscr.io/linuxserver/sonarr:latest`, `ghcr.io/owner/app:1.2.3`, `postgres:17`
+  (short form for Docker Hub, `docker.io/library/postgres:17`). No tag means `latest`.
+- A **Community Apps app** is an XML template, not an image. It names one image in its `<Repository>` element. One image can
+  have many templates, and one project can have several images from different packagers.
+- A **compose file** can name several images (each service's `image:` line). A service with only `build:` has no
+  published image to scan.
+- A **GitHub project** is source code. Its image may be on Docker Hub, ghcr.io or lscr.io under a different name, or not
+  exist; check the project's install instructions. A similarly named image can belong to someone else. A scan is of the exact
+  image you name. A bare word such as `sonarr` is valid, but it means `docker.io/library/sonarr`, which may not be the app
+  you mean; the result says how the name was resolved.
+
+**How to find it.**
+
+1. Community Apps: open the app's page; in its details table the row **Repository** is the image (shown for Docker apps).
+2. An installed container: Docker tab, click the container's icon, **Edit**; the field **Repository** (turn on
+   **Advanced View** if it is not shown). Edit is offered only for containers that have a template.
+3. A compose file: the value of one `image:` line.
+4. A GitHub project: the install or Docker section of its README (a `docker pull`, `docker run` or `image:` line).
+
+Pasted web addresses, XML, compose text, app names with spaces, `file:`/`docker-archive:` style prefixes and anything with
+shell characters are refused with a plain explanation. The page does not read compose files or templates for images.
+
+**What runs.** The pinned Trivy image (the same one as the full scan), as the `remote` role: network yes, no Docker
+socket, `--cap-drop ALL`, `no-new-privileges`, the vulnerability database mounted read-only, `--image-src remote
+--offline-scan --skip-db-update --scanners vuln`, and the plugin's labels and time limit. Registry logins are mounted
+only with "Use registry logins", as for the registry check. Only Trivy runs: the OS package match (Grype) is not part of an
+image scan. The tab shows the command for the name you type and, with each result, the command that was used. It is
+printed from the argument list the script itself passes to `docker run` (`scan-image-cmd`), so the two cannot
+drift. Paths, run ids, labels and the time limit differ on your system; credentials are never
+shown (a login mount appears as a note only).
+
+**Rules.**
+
+- The reference is validated in PHP and in bash with Docker's reference grammar, default deny (at most 300 characters,
+  ASCII, no leading `-`, no whitespace or shell metacharacters), and handed over as one argument after `--`, never through a
+  shell string.
+- The vulnerability database must already be on the server. If it is not, the tab says to run a first scan from
+  Settings, CVE Lens; nothing is downloaded for an image scan. The result shows the database date.
+- One scan at a time, never together with a full scan or a database update (the same lock); the tab says so when busy.
+  **Stop** ends it, and an array stop ends it like any other scan.
+- The result is kept apart: `<data dir>/image-scan/<run id>/` (`report.json`, `meta`, `cmd`), the last 5 (oldest removed),
+  and `image-scan/last` for the last attempt. `report.json`, the history, the trend, the ignore list, notifications and
+  the dashboard tile are not touched (the ignore list is not applied to an image scan either).
+- Failures show the reason in plain words: bad reference, not found, private image, rate limit, timeout. A failed or
+  stopped scan has no result, so the Result section says so instead of showing the previous image; earlier results stay
+  in the list above it. A failed bare name such as `sonarr` also gets the hint to enter the full image name.
+
+The scan covers the image as published now, for the tag you name. It says nothing about how the app is configured when you
+run it. `latest` moves: the result shows the digest that was scanned.
 
 ## What the OS scan covers
 
@@ -399,7 +464,7 @@ An invalid schedule never reaches cron; with no valid schedule there is no cron 
 ## Command line
 
 ```
-/usr/local/emhttp/plugins/unraid-cve-lens/scripts/cve-lens start|stop|status|update-db|apply|config|image
+/usr/local/emhttp/plugins/unraid-cve-lens/scripts/cve-lens start|stop|status|update-db|apply|config|image|scan-image <reference>
 ```
 
 Log: `/var/log/unraid-cve-lens.log` ("View log" on the report and settings pages, see [Progress and the log](#progress-and-the-log)).
@@ -417,7 +482,9 @@ Version scheme: `YYYY.MM.DD` plus an optional letter; bump `&version;` in the .p
 - `tests/lint.sh`: shellcheck (style level, `koalaman/shellcheck:stable` run without network) on all scripts and on
   the .plg's inline blocks with entities resolved; `php -l`; `node --check`; page headers.
 - `tests/unit.sh`: cron validation (the bash and PHP validators agree on every case), the settings readers against
-  hostile files (command substitution, `; cmd`, newline injection, CRLF, unknown keys), `validate.php` in
+  hostile files (command substitution, `; cmd`, newline injection, CRLF, unknown keys), the image reference rules
+  (bash and PHP agree on `tests/fixtures/image-refs.txt`, hostile input, wrong-input explanations, the scan through the
+  fake docker, result isolation, the displayed command against the real call), `validate.php` in
   `update.php`'s scope, `apply`, `uninstall` guards, .plg lifecycle rules, and the aggregator on hand-written
   Trivy JSON fixtures (`tests/aggregate-test.php`). A fake `docker` is used, no container is touched.
 - `tests/render/render-test.sh`: serves the pages from `php -S 127.0.0.1` through a small router that mimics
@@ -433,6 +500,11 @@ Version scheme: `YYYY.MM.DD` plus an optional letter; bump `&version;` in the .p
   `.sha256`, and extracts `bzroot` and `bzmodules` (the `/usr` squashfs) into `tests/.work/unraid-os/root`
   (about 2.7 GB). Checked: mounts and container role, findings with file paths, the package inventory, a simulated
   OS-scan timeout.
+
+## Support
+
+Questions about installing and using the plugin: the [support thread](https://forums.unraid.net/topic/201179-plugin-cve-lens-for-unraid-known-vulnerabilities-in-your-containers-and-the-os/) on the Unraid forums.
+Bugs, feature requests and pull requests: this repository.
 
 ## Thanks
 

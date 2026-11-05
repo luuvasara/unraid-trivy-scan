@@ -1,0 +1,7 @@
+{"SchemaVersion":2,"ArtifactName":"alpine:3.19","ArtifactType":"container_image",
+ "Metadata":{"OS":{"Family":"alpine","Name":"3.19.1"},"ImageID":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "RepoDigests":["alpine@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"],
+  "ImageConfig":{"architecture":"amd64","created":"2026-04-16T23:53:26.803599608Z"}},
+ "Results":[{"Target":"alpine:3.19.1 (alpine 3.19.1)","Class":"os-pkgs","Type":"alpine","Vulnerabilities":[
+  {"VulnerabilityID":"CVE-2024-0001","PkgName":"libcrypto3","InstalledVersion":"3.1.4-r0","FixedVersion":"3.1.4-r1","Severity":"CRITICAL","Status":"fixed","Title":"first","PrimaryURL":"https://avd.aquasec.com/nvd/cve-2024-0001"},
+  {"VulnerabilityID":"CVE-2024-0002","PkgName":"busybox","InstalledVersion":"1.36.1-r0","FixedVersion":"","Severity":"LOW","Status":"affected","Title":"second"}]}]}
