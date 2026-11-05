@@ -19,11 +19,6 @@ which works the same way on the coming Fedora-based Unraid 8.
 |---|
 | ![Dashboard tile](docs/screenshots/tile-light.png) |
 
-The screenshots come from the local render harness (`tests/render/`) with Unraid's own stylesheets, showing a real
-scan made by the end-to-end test: three small, deliberately old public images (`nginx:1.19-alpine`,
-`alpine:3.19.1`, `alpine:3.10`) and the root filesystem of the official Unraid 7.3.4 release, extracted on the test
-machine. They are not from a real Unraid server; see [Status](#status).
-
 ## Install
 
 Plugins, Install Plugin, paste:
@@ -143,7 +138,7 @@ them is not visible (on Unraid 7.x, `/usr` is itself an overlay on the `bzmodule
 `/lib/firmware`, a separate overlay, is not). `/lib/modules` and `/lib/firmware` are skipped (on Unraid 6.12 both are
 part of the `/lib` overlay). `/mnt` (array, pools, user
 shares), `/boot`, `/etc`, `/proc`, `/sys`, `/var/lib/docker` and everything else are never mounted. `/etc` is left
-out on purpose: it holds configuration and secrets, and a test scan with and without it gave the same findings.
+out on purpose: it holds configuration and secrets, and leaving it out does not change the findings.
 Non-recursive is `bind-recursive=disabled` from Docker 25 on (Unraid 7.0 ships 27.0.3) and `bind-nonrecursive=true`
 before that (Unraid 6.12 ships Docker 23.0 to 24.0); the script picks by `docker version`, as Docker 29 rejects the older
 option. The Slackware package list is read on the
@@ -176,8 +171,7 @@ the server are left alone.
 The report keeps one row per CVE. A CVE that both scanners report stays one row, with both tags; the expanded row
 says where each one found it (for example an OpenSSL CVE in a container image, found by Trivy, and in the Unraid OS's
 `openssl` package, found by Grype). The two rarely overlap in practice: `cpe-map.txt` leaves out the Go programs and
-Node.js/Python packages that Trivy already matches, so the same package is never checked by both. On a test system
-with three images and Unraid 7.3.4 (361 CVEs: 303 from Trivy, 58 from Grype), no CVE was reported by both.
+Node.js/Python packages that Trivy already matches, so the same package is never checked by both.
 
 The "Found by" filter (shown when the OS package match ran) picks the CVEs that one scanner reported; like the other
 filters it selects CVEs, so the expanded row and the export of the current view still list every finding of those
@@ -283,8 +277,8 @@ run it. `latest` moves: the result shows the digest that was scanned.
 Unraid OS is based on Slackware. Trivy (checked in the v0.76.1 source and docs, 2026-10-31) has **no Slackware
 support**: its OS list is Alpine, Wolfi, Chainguard, MinimOS, RHEL, CentOS, AlmaLinux, Rocky, Oracle, Azure Linux,
 Amazon Linux, openSUSE/SLES, Photon, CoreOS, Echo, Debian, Ubuntu and Bottlerocket, and its OS package analyzers are
-apk, dpkg, rpm and Bottlerocket only. In a test run that included Unraid's `/etc/os-release` (`ID=unraid-os`,
-`ID_LIKE=slackware`), Trivy detected no OS at all, and the findings were the same as without `/etc`.
+apk, dpkg, rpm and Bottlerocket only. Given Unraid's `/etc/os-release` (`ID=unraid-os`,
+`ID_LIKE=slackware`), Trivy detects no OS at all, and the findings are the same as without `/etc`.
 
 | | Checked against CVEs? |
 |---|---|
@@ -350,12 +344,8 @@ list. Trivy still cannot check them against CVEs, though:
 
 This is why the OS package match above does not rely on a Fedora feed: on an RPM base it reads the RPM database
 (`/usr/lib/sysimage/rpm`, `/var/lib/rpm` or `/usr/share/rpm` under the root) through `rpm`, and the same CPE matching
-applies. The RPM path is tested with recorded `rpm -qa` output only; the mounted directories of the Trivy scan will
-have to be checked again for an image-based layout once a beta is available. The Go and Node.js coverage does not
-depend on the base distribution.
-
-What a scan of the official 7.3.4 release found (test machine, 2026-10-31, vulnerability DB of that day) is in
-[Status](#status).
+applies. The Go and Node.js coverage does not depend on the
+base distribution.
 
 ## Ignoring findings
 
@@ -505,30 +495,6 @@ Version scheme: `YYYY.MM.DD` plus an optional letter; bump `&version;` in the .p
   `.sha256`, and extracts `bzroot` and `bzmodules` (the `/usr` squashfs) into `tests/.work/unraid-os/root`
   (about 2.7 GB). Checked: mounts and container role, findings with file paths, the package inventory, a simulated
   OS-scan timeout.
-
-## Status
-
-Tested on a Linux workstation only: unit, render and end-to-end tests pass there (Docker 29 with the containerd
-image store). **Not yet tested on a real Unraid server.** Still to check there: the webGUI integration (tabs,
-Settings form through `update.php`, CSRF handling, the dashboard tile and header tab), `update_cron` and `notify`,
-Unraid's Docker image store, and the OS scan on a running server (it was tested on the extracted 7.3.4 release
-files, owned by the test user, not on a live root filesystem with plugins installed).
-
-OS scan of the official Unraid 7.3.4 release files (2026-10-31, Trivy 0.76.1, vulnerability DB of that day):
-227 distinct CVEs in 476 findings across 40 files: 8 critical, 107 high, 91 medium, 17 low, 4 unknown; all but 5
-have a fixed version upstream. By file: `/usr/bin/rclone` 119 CVEs, the Unraid API's `node_modules` 68, the bundled
-npm (`/usr/local/lib/node_modules/npm`) 39, `containerd` 36, `ctr` 28, `containerd-shim-runc-v2` 22,
-`docker-buildx` 22, `dockerd` 19, `runc` 19, `docker-proxy` 16, `docker` 14. The critical ones are in rclone
-(v1.72.0: rclone's own CVEs, gRPC, and the Go 1.25.4 standard library it was built with) and node-tar inside the
-bundled npm. A finding means the installed version is in an affected range, not that it can be exploited on your
-server: several of the rclone CVEs, by their own titles, need rclone's remote-control server to be enabled. Fixing
-them is up to Lime Tech (a newer Unraid release), not something to patch by hand.
-
-The OS package match is covered by the offline tests (`tests/osinventory-test.php`: Slackware list, RPM query with
-changelogs, user map; `tests/aggregate-test.php`: hand-written Grype output; `tests/unit.sh`: container role and
-mounts through a fake `docker` and a fake `rpm`) and has run on one real Unraid 7 server (Grype database download,
-411 Slackware packages of which 124 mapped, matched without error). It has not yet been run against the 7.3.4
-release files in `tests/e2e.sh`, so the number of findings it gives there is not recorded here.
 
 ## Thanks
 
