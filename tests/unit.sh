@@ -646,6 +646,7 @@ FATAL GET https://index.docker.io/v2/x/y/manifests/1: UNAUTHORIZED: authenticati
 FATAL GET https://index.docker.io/v2/x/y/manifests/1: TOOMANYREQUESTS: You have reached your pull rate limit|rate limit
 FATAL Get https://registry.example/v2/: dial tcp: lookup registry.example: no such host|could not be reached
 EOF
+grep -q 'Trivy said: .*no such host' "$IM/log" && ! grep -q 'Trivy' <<<"$m" && ok "failure: plain words on the page, Trivy's own line in the log" || bad "failure: Trivy line: '$m'"
 FAKE_IMG_ERR="context deadline exceeded" imenv bash "$S" scan-image-run 'x/y:1'; grep -q 'timed out' "$IM/data/image-scan/last" && ok "timeout: reported as timed out" || bad "timeout message: $(cat "$IM/data/image-scan/last")"
 [ "$(imres | wc -l)" = "$n0" ] && [ "$before" = "$(fp)" ] && ok "failed image scans store no result and leave the full scan's files alone" || bad "failure side effects"
 # hostile references never reach docker
