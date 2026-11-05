@@ -2,6 +2,9 @@
 
 Copied by build.sh from the <CHANGES> block of unraid-cve-lens.plg; edit the .plg, not this file.
 
+## 2026.11.05b
+- New "About" tab with the installed version, the latest changes and the support links.
+- The plugin update window now shows what changed, in its own box, instead of the first-install text. The first-install text only appears on a first install.
 ## 2026.11.05
 - New "Scan an image" tab: enter an image name such as `lscr.io/linuxserver/sonarr:latest` and get its vulnerability list straight from the registry, without installing or pulling it.
 - The tab explains what to enter, where to find the image name, and shows the exact command it runs.
@@ -28,7 +31,7 @@ Copied by build.sh from the <CHANGES> block of unraid-cve-lens.plg; edit the .pl
 - Bookmarks to /Settings/TrivyScan need updating to /Settings/CveLens.
 - The GitHub repository is now luuvasara/unraid-cve-lens (it was unraid-trivy-scan). The old addresses are forwarded; the install URL is https://raw.githubusercontent.com/luuvasara/unraid-cve-lens/main/unraid-cve-lens.plg
 ## 2026.11.03
-- New (Xaero): the Unraid OS's own packages are now checked for CVEs. Trivy has no advisory data for Slackware (or for the Fedora base of Unraid 8), so the package list is mapped to NVD product names and matched by upstream version with a pinned Grype image, in a container without network, without the Docker socket and with nothing of the host but that list. Settings, Unraid OS: "Match OS packages against NVD" (on) and "Include the kernel" (off). NVD only knows upstream versions, so a fix Lime Tech backported can still show up: check findings against the release notes; os-ignore.txt next to the settings file hides a CVE.
+- New (Xaero): the Unraid OS's own packages are now checked for CVEs. Trivy has no advisory data for Slackware, so the package list is mapped to NVD product names and matched by upstream version with a pinned Grype image, in a container without network, without the Docker socket and with nothing of the host but that list. Settings, Unraid OS: "Match OS packages against NVD" (on) and "Include the kernel" (off). NVD only knows upstream versions, so a fix Lime Tech backported can still show up: check findings against the release notes; os-ignore.txt next to the settings file hides a CVE.
 - NVD entries that give no version range (they list every version as affected) and disputed entries are listed as "not counted" with the reason instead of as findings. On the 7.3.4 release files that leaves 73 CVEs of 160 raw matches. OS package matches never trigger the "new fixable critical" notification.
 - New (Xaero): Settings, Databases: for each database (Trivy, Java, Grype) choose whether it is kept on disk between scans or downloaded for every scan and deleted afterwards, with its size. All are kept by default; the Grype database is about a 200 MB download and 3.1 GB on disk.
 - New (Xaero): the report has a Target filter: all, the Unraid OS, container images, or one image. The CVE count next to an OS package shows exactly that package's CVEs.

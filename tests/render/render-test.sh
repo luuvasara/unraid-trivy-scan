@@ -59,7 +59,8 @@ scenario() {   # scenario <name> <port> <theme> [6.12]: webroot + env + php -S i
   [ -f "$d/varini" ] || printf 'csrf_token="0123456789ABCDEF"\n' >"$d/varini"
   printf '#!/bin/sh\necho "$*" >>%s/stub.log\ncase "$1" in scan-image-cmd) exec env UTS_DATA=%s/data UTS_CFG=%s/cfg bash %s/scripts/cve-lens "$@" ;; image) echo "aquasec/trivy:0.76.1@sha256:790fd66d1697395d8693d1acaa1ea702406a20f109b6fc7bac8db623eca6c06c" ;; grype-image) echo "anchore/grype:v0.121.0@sha256:621d56d1d68106b787022c81546f7e0a36202a25d1239f0c20195fab8c16f7ea" ;; *) echo "scan started" ;; esac\n' "$d" "$d" "$d" "$P" >"$d/stub"
   chmod 755 "$d/stub"
-  env THEME="$theme" WEBGUI="$gui" WEBROOT="$d/webroot" UTS_CFG="$d/cfg" UTS_DATA="${SCEN_DATA:-$d/data}" UTS_RUN="$d/run" UTS_VARINI="$d/varini" UTS_LOG="$d/log" \
+  "$HERE/tools/changes-from-plg.sh" "$HERE/unraid-cve-lens.plg" >"$d/changes.txt"
+  env UTS_CHANGES="${SCEN_CHANGES:-$d/changes.txt}" THEME="$theme" WEBGUI="$gui" WEBROOT="$d/webroot" UTS_CFG="$d/cfg" UTS_DATA="${SCEN_DATA:-$d/data}" UTS_RUN="$d/run" UTS_VARINI="$d/varini" UTS_LOG="$d/log" \
       UTS_DOCKER_SOCK="${SCEN_SOCK:-$W/docker.sock}" UTS_SCRIPT="$d/stub" TZ=UTC php -S "127.0.0.1:$port" -t "$d/webroot" "$HERE/tests/render/router.php" >"$d/php.log" 2>&1 &
   PIDS+=($!)
 }
@@ -509,6 +510,13 @@ compose_check "image tab shown" "tab=3" 1 1
 compose_check "Report tab absent" "tab=3&without=CveLensReport" 0 1
 compose_check "image tab absent" "tab=1&without=CveLensImage" 1 0
 
+# About tab, in the composed page and on its own
+ABVER=$(sed -n 's/^ *<!ENTITY version *"\([^"]*\)">.*/\1/p' "$HERE/unraid-cve-lens.plg")
+DOM=$(dom "$C/?compose=1&tab=4")
+grep -q "id=\"uts-a-ver\">Version $ABVER<" <<<"$DOM" && grep -q 'Earlier versions' <<<"$DOM" && ! grep -q 'id="uts-a-old" hidden' <<<"$DOM" && ok "about tab: version, latest changes, earlier versions" || bad "about tab: $(grep -o 'id="uts-a-ver">[^<]*' <<<"$DOM")"
+[ "$(grep -o 'id="uts-a-latest"><li>' <<<"$DOM" | wc -l)" = 1 ] && grep -q 'forums.unraid.net/topic/201179' <<<"$DOM" && grep -q 'unraid-cve-lens/issues' <<<"$DOM" && grep -q 'unraid-cve-lens/discussions' <<<"$DOM" && grep -q 'github.com/search?q=owner%3Aluuvasara+unraid&amp;type=repositories' <<<"$DOM" && ok "about tab: changes listed, support, issues, discussions, more plugins links" || bad "about tab links"
+grep -q 'id="uts-status">\(Idle\|Last scan\)' <<<"$DOM" && ok "about tab: the other tabs still start (shared DOM)" || bad "about tab broke the report start"
+grep -q 'data-uts-init' <<<"$(grep -o '<div class="uts" id="uts-about"[^>]*>' <<<"$DOM")" && bad "about root was started by report.js" || ok "about root is not started by report.js"
 # Unraid 6.12.15 layout
 img_scenario image-612 "$PORT_IMG_612" white 6.12
 DOM=$(dom "http://127.0.0.1:$PORT_IMG_612/?tab=3")

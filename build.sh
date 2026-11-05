@@ -22,6 +22,10 @@ chmod 755 "$ST"
 UNTRACKED=$(git -C "$HERE" ls-files --others --exclude-standard -- src)
 [ -z "$UNTRACKED" ] || { echo "FATAL: untracked files under src/ (git add or remove them):"; echo "$UNTRACKED"; exit 1; }
 (cd "$HERE/src" && git ls-files -z --cached -- . | xargs -0 cp -a --parents -t "$ST/")
+# include/changes.txt: the About tab and the install box read it, so both show what the .plg's <CHANGES> says
+"$HERE/tools/changes-from-plg.sh" "$PLG" >"$ST/$P/include/changes.txt"
+TOPVER=$(sed -n '1s/^###//p' "$ST/$P/include/changes.txt")
+[ "$TOPVER" = "$VER" ] || { echo "FATAL: <CHANGES> starts with $TOPVER, not $VER (add this version's changes first)"; exit 1; }
 find "$ST" -type d -exec chmod 755 {} +
 find "$ST" -type f -exec chmod 644 {} +
 chmod 755 "$ST/$P/scripts/cve-lens" "$ST/$P/scripts/migrate-from-trivy-scan" "$ST/$P/event/stopping_docker"   # emhttp_event runs only executable event files
@@ -55,6 +59,6 @@ grep -q "<!ENTITY md5 *\"$MD5\">" "$PLG" || { echo "FATAL: could not write md5 i
 python3 -c 'import sys,xml.dom.minidom as m; m.parse(sys.argv[1])' "$PLG" || { echo "FATAL: $PLG is not well-formed XML"; exit 1; }
 { echo "# Changelog"; echo
   echo "Copied by build.sh from the <CHANGES> block of $NAME.plg; edit the .plg, not this file."; echo
-  sed -n '/^<CHANGES>/,/^<\/CHANGES>/p' "$PLG" | sed '1d;$d' | sed -e 's/^###/## /' -e 's/&lt;/</g; s/&gt;/>/g; s/&amp;/\&/g'
+  "$HERE/tools/changes-from-plg.sh" "$PLG" | sed -e 's/^###/## /'
 } >"$HERE/CHANGELOG.md"
 echo "built $PKG"; cat "$PKG.md5"

@@ -339,7 +339,7 @@ mkdir -p "$W/victim3"; touch "$W/victim3/keep"; ln -s "$W/victim3" "$OSD/exploit
 FAKE_EXPLOIT=$XF osrun 'OS_SCAN="no"' 'JAVA_DB="no"'
 [ -e "$W/victim3/keep" ] && [ ! -e "$W/victim3/kev.json" ] && ! grep -q -- '-exploit ' "$W/docker.log" && ok "a symlink in place of the exploit directory is not followed" || bad "followed an exploit symlink: $(ls "$W/victim3")"
 rm -f "$OSD/exploit"
-# RPM base (Unraid 8 / Fedora): no pkgtools, an RPM database and rpm(8)
+# RPM base (Fedora): no pkgtools, an RPM database and rpm(8)
 rm -rf "$OR/var/lib/pkgtools"; mkdir -p "$OR/usr/lib/sysimage/rpm"
 printf '#!/bin/sh\necho "rpm $*" >>%s/rpm.log\ncase "$*" in *CHANGELOGTEXT*) cat %s ;; *) cat %s ;; esac\n' "$W" \
   "$HERE/tests/fixtures/osinv/rpm/rpm-changelog.txt" "$HERE/tests/fixtures/osinv/rpm/rpm.tsv" >"$W/bin/fake-rpm"; chmod 755 "$W/bin/fake-rpm"
@@ -443,6 +443,38 @@ MD5=$(sed -n 's/^ *<!ENTITY md5 *"\([^"]*\)">.*/\1/p' "$PLG"); PKG=$HERE/package
 [ -f "$PKG" ] && [ "$(md5sum <"$PKG" | cut -d' ' -f1)" = "$MD5" ] && [ "$(cut -d' ' -f1 "$PKG.md5")" = "$MD5" ] \
   && ok "package and .md5 match the .plg &md5;" || bad "package md5 (run ./build.sh)"
 cmp -s <(tar -xJOf "$PKG" ./usr/local/emhttp/plugins/unraid-cve-lens/scripts/cve-lens) "$S" && ok "package contains the current scripts/cve-lens" || bad "package is stale (run ./build.sh)"
+cmp -s <(tar -xJOf "$PKG" ./usr/local/emhttp/plugins/unraid-cve-lens/include/changes.txt) <("$HERE/tools/changes-from-plg.sh" "$PLG") && ok "package changes.txt is the .plg's <CHANGES>" || bad "package changes.txt differs from the .plg (run ./build.sh)"
+[ "$(sed -n 's/^## //p;T;q' "$HERE/CHANGELOG.md")" = "$VER" ] && [ "$("$HERE/tools/changes-from-plg.sh" "$PLG" | sed -n '1s/^###//p')" = "$VER" ] && ok "<CHANGES> and CHANGELOG.md start with this version" || bad "<CHANGES> does not start with $VER"
+[ ! -e "$P/include/changes.txt" ] && ok "changes.txt is generated, not kept in the tree (one source: the .plg)" || bad "changes.txt in the tree"
+
+# install and update message: what runs when, from the .plg's own pre-install block and the script
+IW=$W/installmsg; mkdir -p "$IW/pkgs" "$IW/boot" "$IW/run"
+php -r '$d=new DOMDocument(); $d->substituteEntities=true; $d->load($argv[1], LIBXML_NOENT); $f=$d->getElementsByTagName("FILE")->item(0); echo $f->textContent;' "$PLG" \
+  | sed -n '/^OLD=/,/install-from$/p' | sed -e "s#/var/log/packages/#$IW/pkgs/#g" -e "s#/boot/config/plugins/#$IW/boot/#g" -e "s#/var/run/unraid-cve-lens/#$IW/run/#g" >"$IW/detect.sh"
+grep -q '^OLD=' "$IW/detect.sh" && grep -q 'install-from$' "$IW/detect.sh" && ok "pre-install records how this run started" || bad "pre-install detection not found: $(cat "$IW/detect.sh")"
+detect() { bash "$IW/detect.sh"; cat "$IW/run/install-from"; }
+[ "$(detect)" = fresh ] && ok "detect: nothing installed, nothing on the flash = first install" || bad "detect fresh: $(detect)"
+: >"$IW/boot/unraid-cve-lens.plg"
+[ "$(detect)" = boot ] && ok "detect: on the flash, no package yet = boot" || bad "detect boot: $(detect)"
+: >"$IW/pkgs/unraid-cve-lens-2026.11.05-x86_64-1"; : >"$IW/pkgs/some-other-1.0-x86_64-1"
+[ "$(detect)" = "update 2026.11.05" ] && ok "detect: an older package = update, with its version" || bad "detect update: $(detect)"
+"$HERE/tools/changes-from-plg.sh" "$PLG" >"$IW/changes.txt"
+notes() { UTS_CHANGES=$IW/changes.txt UTS_DATA=$IW UTS_CFG=$IW bash "$S" install-notes "$@"; }
+OUTF=$(notes "$VER" fresh); OUTU=$(notes "$VER" update 2026.11.05); OUTB=$(notes "$VER" boot); OUTO=$(notes "$VER" update 2026.11.03); OUTUK=$(notes "$VER" update 2026.11.05i); OUTG=$(notes "$VER" update 'x;rm'); OUTS=$(notes "$VER" update "$VER")
+grep -q 'No scan has been started' <<<"$OUTF" && grep -q "What changed in CVE Lens $VER" <<<"$OUTF" && ok "first install: first-scan text and the box" || bad "fresh: $OUTF"
+! grep -q 'first scan\|No scan has been started' <<<"$OUTU" && grep -q "updated from 2026.11.05 to $VER" <<<"$OUTU" && grep -q "What changed in CVE Lens $VER" <<<"$OUTU" && ok "update: updated from X to Y and the box, no first-scan text" || bad "update: $OUTU"
+[ "$(wc -l <<<"$OUTB")" = 1 ] && ! grep -q '+=' <<<"$OUTB" && ok "boot: one line, no box in the syslog" || bad "boot output: $OUTB"
+[ "$(awk 'length($0) != 80 && /^[+|]/' <<<"$OUTF$OUTU$OUTO$OUTUK" | wc -l)" = 0 ] && [ "$(LC_ALL=C grep -c '[^ -~]' <<<"$OUTO")" = 0 ] && ok "box: every line is 80 columns, plain ASCII" || bad "box lines: $(awk 'length($0) != 80 && /^[+|]/' <<<"$OUTF$OUTO")"
+grep -q '^| 2026.11.05:' <<<"$OUTO" && grep -q "^| $VER:" <<<"$OUTO" && grep -q 'earlier release' <<<"$OUTO" && [ "$(grep -c '^| 2026\.[0-9.a-z]*: *|' <<<"$OUTO")" = 3 ] && ok "update over several releases: three listed, the rest by count" || bad "several: $OUTO"
+! grep -q '^| 2026' <<<"$OUTU" && ok "update over one release: no version subheading" || bad "one release: $OUTU"
+grep -q "changed\|updated from" <<<"$OUTUK" && grep -q "What changed in CVE Lens $VER" <<<"$OUTUK" && ! grep -q '^| 2026' <<<"$OUTUK" && ok "unknown older version (not in the notes, newer tag): only the current release" || bad "unknown version: $OUTUK"
+grep -q "What changed in CVE Lens $VER" <<<"$OUTG" && ! grep -q '^| 2026' <<<"$OUTG" && ok "a malformed version is not used to select releases" || bad "malformed: $OUTG"
+grep -q "$VER reinstalled" <<<"$OUTS" && ok "same version: reinstalled" || bad "reinstall: $OUTS"
+printf '###9999.01.01\n- %s\n- short `code` · item\n' "$(printf 'word %.0s' $(seq 1 60))$(printf 'x%.0s' $(seq 1 200))" >"$IW/long.txt"
+OUTL=$(UTS_CHANGES=$IW/long.txt UTS_DATA=$IW UTS_CFG=$IW bash "$S" install-notes 9999.01.01 update 2026.01.01)
+[ "$(awk 'length($0) != 80 && /^[+|]/' <<<"$OUTL" | wc -l)" = 0 ] && [ "$(sed -n 's/^[|-] *//p' <<<"$OUTL" | grep -c word)" -ge 3 ] && [ "$(tr -d '\n| -' <<<"$OUTL" | grep -o 'x\{200\}' | wc -l)" = 1 ] && grep -q 'short code - item' <<<"$OUTL" && ok "box: long lines and a long word wrap at 80 columns, nothing lost, non-ASCII gone" || bad "long lines: $OUTL"
+OUTN=$(UTS_CHANGES=$IW/none UTS_DATA=$IW UTS_CFG=$IW bash "$S" install-notes "$VER" update 2026.11.05)
+grep -q "updated from" <<<"$OUTN" && ! grep -q '+=' <<<"$OUTN" && ok "no changes file: the update line alone" || bad "no changes file: $OUTN"
 [ -x "$P/event/stopping_docker" ] && ok "event/stopping_docker is executable in the tree (emhttp_event runs only executable files)" || bad "event/stopping_docker not executable"
 grep -q 'chmod 755 /usr/local/emhttp/plugins/unraid-cve-lens/event/stopping_docker' <<<"$INST" && ok "post-install sets 755 on the event script" || bad "post-install does not chmod the event script"
 PKG_LIST=$(tar -tJvf "$PKG")   # list first: "tar | grep -q" under pipefail fails at random when grep exits early (SIGPIPE)

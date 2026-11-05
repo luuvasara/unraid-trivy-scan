@@ -4,8 +4,7 @@ An Unraid plugin that scans the images of your Docker containers, and the Unraid
 vulnerabilities with [Trivy](https://github.com/aquasecurity/trivy), and shows the result as one row per CVE: which
 images (or OS files) and packages are affected, whether a package update or a newer image fixes it, and which
 targets could not be scanned and why. For the OS, read [what the OS scan covers](#what-the-os-scan-covers) first:
-Trivy cannot check Unraid's own Slackware packages, so they are matched against NVD's CPE data with Grype instead,
-which works the same way on the coming Fedora-based Unraid 8.
+Trivy cannot check Unraid's own Slackware packages, so they are matched against NVD's CPE data with Grype instead.
 
 The plugin itself is a page and a script. The scanners run as short-lived Docker containers, so Docker must be
 running. Nothing stays running between scans.
@@ -85,9 +84,9 @@ You can also install CVE Lens directly and remove the old entry by hand; the sam
 - Optional scan of the Unraid OS itself (on by default): the Go programs, Node.js packages (including the Unraid
   API) and other language packages inside the OS appear as one more target, "Unraid OS 7.x.y", with the file path
   of each affected package.
-- OS package match (on with the OS scan): the OS's own packages (Slackware packages on Unraid 7, RPMs on a Fedora
-  base) are mapped to NVD product names (CPEs) and matched by upstream version with a pinned Grype image, because
-  Trivy has no advisory feed for either base; optionally the kernel too. See
+- OS package match (on with the OS scan): the OS's own packages are mapped to NVD product names (CPEs) and matched
+  by upstream version with a pinned Grype image, because Trivy has no advisory feed for them; optionally the kernel
+  too. See
   [what the OS scan covers](#what-the-os-scan-covers).
 - Which scanner found what: a "Scanners" overview under the summary has one card each for Trivy, Grype (NVD match
   of the OS packages) and the exploit data, with its version, database date, state (OK, partly, failed, off in the
@@ -113,6 +112,8 @@ You can also install CVE Lens directly and remove the old entry by hand; the sam
   show "no fix" for that reason.
 - Scan an image: type an image reference (`lscr.io/linuxserver/sonarr:latest`, `postgres:17`) on its own tab and get the
   vulnerability report for it from the registry, without installing, pulling or running it. See [Scan an image](#scan-an-image).
+- About tab: the installed version, the latest changes and the support links. A plugin update shows what changed in the
+  update window.
 - Dashboard tile, optional header tab, Unraid notification when new fixable critical CVEs appear, and when a CVE on
   the KEV list newly affects a container image.
 - Follows the active Unraid theme (black, white, gray, azure) through the theme's CSS variables.
@@ -165,7 +166,7 @@ the server are left alone.
 
 | Card | Looks at | Cannot see |
 |---|---|---|
-| **Trivy** | Container images (their OS packages and language packages), and the language packages inside the Unraid OS (Go binaries, Node.js, Python, ...) | The Unraid OS's own Slackware or RPM packages and the kernel: Trivy has no advisory feed for them |
+| **Trivy** | Container images (their OS packages and language packages), and the language packages inside the Unraid OS (Go binaries, Node.js, Python, ...) | The Unraid OS's own Slackware packages and the kernel: Trivy has no advisory feed for them |
 | **Grype · NVD** | The Unraid OS's own packages that have an NVD product mapping (`cpe-map.txt`), matched by upstream version | Fixes backported without a version change (they still show up), and packages without a mapping |
 | **Exploit data** | Nothing by itself: marks the CVEs the scanners found as known exploited (CISA KEV) or likely to be (EPSS) | - |
 
@@ -295,18 +296,14 @@ apk, dpkg, rpm and Bottlerocket only. Given Unraid's `/etc/os-release` (`ID=unra
 | The Linux kernel | only with "Include the kernel" (off by default) |
 | C/C++ programs and libraries outside any package manager | **no** |
 
-### The OS package match (Slackware now, Fedora later)
+### The OS package match
 
-Trivy needs a distribution advisory feed to check OS packages, and there is none it can use for Slackware or for
-Fedora / Fedora CoreOS (see below). Both bases ship mostly unmodified upstream versions, though, and NVD records the
-affected upstream version ranges of each CVE as CPE configurations. So the plugin matches by upstream name and
-version, the same way on both bases:
+Trivy needs a distribution advisory feed to check OS packages, and there is none it can use for Slackware. Slackware
+ships mostly unmodified upstream versions, though, and NVD records the affected upstream version ranges of each CVE
+as CPE configurations. So the plugin matches by upstream name and version:
 
-1. **Inventory, on the host.** Slackware: the file names in `/var/lib/pkgtools/packages`. RPM (Unraid 8): `rpm -qa`
-   with each package's source RPM name, plus the changelogs. Which one is used is decided by what exists, not by a
-   version check, so nothing has to change when Unraid 8 ships.
-2. **Mapping** (`include/osinventory.php`). Package names (Slackware names or RPM source names; RPM sub-packages such
-   as `openssl-libs` fold into their source package) are mapped to NVD `vendor:product` pairs from
+1. **Inventory, on the host.** The file names in `/var/lib/pkgtools/packages`.
+2. **Mapping** (`include/osinventory.php`). Package names are mapped to NVD `vendor:product` pairs from
    `include/cpe-map.txt`, about 200 entries. The result is a CycloneDX SBOM with one CPE 2.3 per package and version.
    Packages without a mapping are not guessed: a wrong vendor/product pair gives false findings. They are listed in
    the report, unchecked. Go programs and Node.js packages are left to the Trivy scan, which reads their exact
@@ -314,8 +311,7 @@ version, the same way on both bases:
 3. **Matching.** The pinned `anchore/grype` image (version and index digest in `GRYPE_IMAGE`, `scripts/cve-lens`)
    matches the SBOM against its NVD data, offline.
 4. **Backports.** NVD only knows upstream versions, so a fix backported into the same version is still reported.
-   On RPM systems, a CVE id named in the package's changelog is taken as fixed (that is how Fedora documents
-   backports). On either base, `/boot/config/plugins/unraid-cve-lens/os-ignore.txt` hides CVEs: one per line,
+   `/boot/config/plugins/unraid-cve-lens/os-ignore.txt` hides CVEs: one per line,
    `CVE-2025-1234 [package] [# note]`. The report lists every hidden match and the reason.
 5. **Entries NVD cannot place.** Some NVD records name a product but no version range, so Grype reports them for
    every version ("none (unknown)" in its output), and some carry NVD's `** DISPUTED **` marker. Neither says
@@ -332,25 +328,6 @@ Limits, plainly: the match is only as good as NVD's CPE data (NVD's analysis bac
 CVEs have no CPE configuration yet and are not found), the mapping covers the packages most likely to matter rather
 than all ~370, and Slackware/Lime Tech backports are not visible to it. Treat a finding as "check the release notes",
 not as proof. The report still links the Unraid release notes from the OS package list.
-
-### Unraid 8 will not close this gap by itself
-
-Lime Technology announced on 2026-08-17 that Unraid 8 moves from Slackware to a Fedora base built on Universal
-Blue's uCore ([announcement](https://unraid.net/blog/unraid-8-announced)); there is no release date yet ("it'll
-ship when it's ready"). uCore is built on Fedora CoreOS, so the OS packages will be RPMs that Trivy can at least
-list. Trivy still cannot check them against CVEs, though:
-
-- Trivy's coverage page for CoreOS, which covers Fedora CoreOS, says SBOM ✓ and Vulnerability "-" (not supported)
-  ([v0.76.1 docs](https://github.com/aquasecurity/trivy/blob/v0.76.1/docs/guide/coverage/os/coreos.md)).
-- Fedora itself is not on Trivy's list of supported operating systems. The request "Support Fedora"
-  ([aquasecurity/trivy#121](https://github.com/aquasecurity/trivy/issues/121)) has been open since 2019-08-19 and
-  is labelled `help wanted`. The blocker discussed there is that Fedora publishes no structured,
-  machine-readable advisory feed like RHEL's.
-
-This is why the OS package match above does not rely on a Fedora feed: on an RPM base it reads the RPM database
-(`/usr/lib/sysimage/rpm`, `/var/lib/rpm` or `/usr/share/rpm` under the root) through `rpm`, and the same CPE matching
-applies. The Go and Node.js coverage does not depend on the
-base distribution.
 
 ## Ignoring findings
 
