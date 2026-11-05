@@ -15,7 +15,7 @@
 #            of that release): the tile uses the older header markup there
 #   progress the run panel: a fake running scan (steps, download sample, log), the idle summary, "View log" (Unraid's
 #            openTerminal when present, else include/log.php), and log.php itself
-# RENDER_PORT_BASE=<port> (default 18731): the harness listens on this port and the next 13, so runs in several
+# RENDER_PORT_BASE=<port> (default 18731): the harness listens on this port and the next 17, so runs in several
 # checkouts at the same time can use separate ranges.
 set -uo pipefail
 HERE=$(cd "$(dirname "$0")/../.." && pwd)
@@ -30,6 +30,7 @@ PORT_HOSTILE=$PB PORT_DEMO_LIGHT=$((PB + 1)) PORT_DEMO_DARK=$((PB + 2)) PORT_EMP
 PORT_IGNORE_LIGHT=$((PB + 5)) PORT_IGNORE_DARK=$((PB + 6))
 PORT_PROG_LIGHT=$((PB + 7)) PORT_PROG_DARK=$((PB + 8)) PORT_PROG_IDLE=$((PB + 9))
 PORT_SCAN_LIGHT=$((PB + 10)) PORT_SCAN_DARK=$((PB + 11)) PORT_612_LIGHT=$((PB + 12)) PORT_612_DARK=$((PB + 13))
+PORT_IMG_LIGHT=$((PB + 14)) PORT_IMG_DARK=$((PB + 15)) PORT_IMG_612=$((PB + 16)) PORT_IMG_NODB=$((PB + 17))
 "$HERE/tests/render/fetch-webgui.sh" >/dev/null || { echo "FAIL cannot fetch webGui styles"; exit 1; }
 "$HERE/tests/render/fetch-webgui.sh" 6.12 >/dev/null || { echo "FAIL cannot fetch the 6.12.15 webGui styles"; exit 1; }
 
@@ -49,7 +50,7 @@ scenario() {   # scenario <name> <port> <theme> [6.12]: webroot + env + php -S i
   ln -sfn "$wg/dynamix" "$d/webroot/plugins/dynamix"     # DashStats.page of that webGui (the tile header reads it)
   ln -sfn "$P" "$d/webroot/plugins/unraid-cve-lens"
   [ -f "$d/varini" ] || printf 'csrf_token="0123456789ABCDEF"\n' >"$d/varini"
-  printf '#!/bin/sh\necho "$*" >>%s/stub.log\ncase "$1" in image) echo "aquasec/trivy:0.76.1@sha256:790fd66d1697395d8693d1acaa1ea702406a20f109b6fc7bac8db623eca6c06c" ;; grype-image) echo "anchore/grype:v0.121.0@sha256:621d56d1d68106b787022c81546f7e0a36202a25d1239f0c20195fab8c16f7ea" ;; *) echo "scan started" ;; esac\n' "$d" >"$d/stub"
+  printf '#!/bin/sh\necho "$*" >>%s/stub.log\ncase "$1" in scan-image-cmd) exec env UTS_DATA=%s/data UTS_CFG=%s/cfg bash %s/scripts/cve-lens "$@" ;; image) echo "aquasec/trivy:0.76.1@sha256:790fd66d1697395d8693d1acaa1ea702406a20f109b6fc7bac8db623eca6c06c" ;; grype-image) echo "anchore/grype:v0.121.0@sha256:621d56d1d68106b787022c81546f7e0a36202a25d1239f0c20195fab8c16f7ea" ;; *) echo "scan started" ;; esac\n' "$d" "$d" "$d" "$P" >"$d/stub"
   chmod 755 "$d/stub"
   env THEME="$theme" WEBGUI="$gui" WEBROOT="$d/webroot" UTS_CFG="$d/cfg" UTS_DATA="$d/data" UTS_RUN="$d/run" UTS_VARINI="$d/varini" UTS_LOG="$d/log" \
       UTS_SCRIPT="$d/stub" TZ=UTC php -S "127.0.0.1:$port" -t "$d/webroot" "$HERE/tests/render/router.php" >"$d/php.log" 2>&1 &
@@ -383,6 +384,61 @@ for theme in white black; do
     shot "$U/?tab=$tab" 1400,1500 "$W/page-612-$tab-$label.png" && ok "screenshot page-612-$tab-$label.png" || bad "screenshot 612 tab $tab $label"
   done
 done
+
+# ---------------------------------------------------------------- scan an image (its own tab)
+# A stored result (hostile strings in the Trivy output, a bare image name), the command the page shows (from the script's
+# own argument list), the explanation of wrong inputs (include/lib.php), the missing-database state, 7.x themes and 6.12.
+img_scenario() {   # img_scenario <name> <port> <theme> [6.12]: a data dir with a database and one stored result
+  local name=$1 port=$2 theme=$3 gui=${4:-} d=$W/$1 id=1793865483-1234
+  mkdir -p "$d/data/cache/db" "$d/data/image-scan/$id"
+  printf 'x' >"$d/data/cache/db/trivy.db"; printf '{"UpdatedAt":"2026-11-05T07:00:54.9Z","NextUpdate":"2026-11-06T07:00:54Z"}' >"$d/data/cache/db/metadata.json"
+  : >"$d/cfg"
+  local wk=$d/work; mkdir -p "$wk/local"; cp "$H/work/local/1.json" "$wk/local/1.json"
+  printf '1\t\talpine\t\t0\t\t\t\n' >"$wk/images.tsv"; printf '1\tlocal\tok\t\n' >"$wk/results.tsv"; : >"$wk/warnings.txt"
+  php "$P/include/aggregate.php" "$wk" "$d/data/image-scan/$id/report.json" "trivy=0.76.1@sha256:x" "cache=$d/data/cache" "exploit=$HERE/tests/fixtures/exploit" history=no imageref=alpine >/dev/null || bad "aggregate image result"
+  printf 'ref=alpine\nfinished=1793865486\ncves=3\n' >"$d/data/image-scan/$id/meta"
+  printf 'result=ok\nended=1793865486\nref=alpine\nid=%s\nmessage=3 CVE(s) found\n' "$id" >"$d/data/image-scan/last"
+  UTS_DATA=$d/data UTS_CFG=$d/cfg UTS_PLUGIN_DIR=$P bash "$P/scripts/cve-lens" scan-image-cmd alpine >"$d/data/image-scan/$id/cmd" || bad "scan-image-cmd for the stored result"
+  scenario "$name" "$port" "$theme" "$gui"; wait_up "$port" || bad "image harness $name"
+}
+for theme in white black; do
+  port=$([ $theme = white ] && echo $PORT_IMG_LIGHT || echo $PORT_IMG_DARK); label=$([ $theme = white ] && echo light || echo dark)
+  img_scenario "image-$theme" "$port" "$theme"
+  U=http://127.0.0.1:$port
+  RAW=$(curl -s "$U/?tab=3"); DOM=$(dom "$U/?tab=3#open=CVE-2024-0101")
+  grep -q 'id="uts-imgref"' <<<"$RAW" && grep -q 'Scan an image' <<<"$(curl -s "$U/?tab=1")" && ok "image tab ($theme): the tab exists next to Report and Settings, the page has the input" || bad "image tab ($theme): input or tab"
+  no_payload "image tab DOM ($theme)" "$DOM"; check_text "image result ($theme)" "$DOM" title1 pkg1 target
+  for t in 'What to enter' 'How to find it' 'A Community Apps app' 'is an XML template, not an image' 'A compose file' 'build:' 'A GitHub project' 'A similarly named image can belong to someone else' 'the row <strong>Repository</strong>' 'choose <strong>Edit</strong>' '<strong>Advanced View</strong>' 'not part of an image scan'; do
+    grep -qF "$t" <<<"$RAW" || bad "image tab ($theme): help text '$t' missing"
+  done; ok "image tab ($theme): help names the four things, the CA Repository row, Docker tab Edit, compose image:, GitHub docs, and that Grype is not part of an image scan"
+  [ "$(grep -o 'class="uts-ex"' <<<"$RAW" | wc -l)" = 4 ] && grep -q 'data-ref="postgres:17"' <<<"$RAW" && grep -q 'data-ref="lscr.io/linuxserver/sonarr:latest"' <<<"$RAW" && grep -q 'data-ref="ghcr.io/home-assistant/home-assistant:stable"' <<<"$RAW" && grep -q 'data-ref="alpine:3.20"' <<<"$RAW" \
+    && ok "image tab ($theme): four examples (Docker Hub short name, lscr.io, ghcr.io, version tag) that fill the field" || bad "image tab ($theme): examples"
+  grep -q 'Vulnerability database from 2026-11-05' <<<"$DOM" && ! grep -q 'id="uts-scan" disabled=""' <<<"$DOM" && ok "image tab ($theme): status shows the database date, Scan enabled" || bad "image tab ($theme): status: $(grep -o 'id="uts-status">[^<]*' <<<"$DOM")"
+  grep -q '>Resolved as<' <<<"$DOM" && grep -q 'docker.io/library/alpine:latest' <<<"$DOM" && grep -q 'resolved as docker.io/library/alpine: the Docker Hub official image' <<<"$DOM" && grep -q 'No tag was given, so latest was scanned' <<<"$DOM" \
+    && grep -q '>Digest scanned<' <<<"$DOM" && grep -q '>Vulnerability database<' <<<"$DOM" && ok "image result ($theme): resolved name, digest, database date and the warning for a bare name" || bad "image result ($theme): header: $(tr -d '\n' <<<"$DOM" | grep -o 'uts-imgfacts.\{0,600\}')"
+  grep -q 'It says nothing about how an app is configured when you run it' <<<"$DOM" && ok "image result ($theme): coverage note" || bad "image result ($theme): coverage note"
+  grep -q 'The command this scan ran' <<<"$DOM" && grep -q 'aquasec/trivy:0.76.1@sha256:790fd66d' <<<"$DOM" && grep -q -- '--image-src remote' <<<"$DOM" && grep -q 'Docker part' <<<"$DOM" && grep -q 'Trivy part' <<<"$DOM" && grep -q 'trivy image' <<<"$DOM" \
+    && ! grep -q 'config.json' <<<"$DOM" && ok "image result ($theme): the command used, docker part and trivy part apart, pinned Trivy image" || bad "image result ($theme): command"
+  grep -q 'uts-card-critical' <<<"$DOM" && ! grep -q 'Images scanned' <<<"$DOM" && ! grep -q 'Fixed in a newer image' <<<"$DOM" && ! grep -q 'class="uts-ignore-open"\|Ignore…' <<<"$DOM" && ok "image result ($theme): severity cards and the report table, without the full scan's image count, registry filter or ignore form" || bad "image result ($theme): leftovers of the full report"
+  IU=$U/plugins/unraid-cve-lens/include/image.php
+  J=$(curl -s "$IU?cmd=lscr.io%2Flinuxserver%2Fsonarr%3Alatest")
+  php -r '$j=json_decode($argv[1],true); exit(end($j["trivy"])==="lscr.io/linuxserver/sonarr:latest" && prev($j["trivy"])==="--" && $j["image"]==="aquasec/trivy:0.76.1@sha256:790fd66d1697395d8693d1acaa1ea702406a20f109b6fc7bac8db623eca6c06c" && in_array("--rm",$j["docker"]) && !in_array("/var/run/docker.sock",$j["docker"]) ? 0 : 1);' "$J" \
+    && ok "image.php?cmd: the command for a typed name, from the script (pinned image, no Docker socket)" || bad "image.php?cmd: $J"
+  for ex in postgres:17 ghcr.io/home-assistant/home-assistant:stable; do [ "$(code "$IU?cmd=$ex")" = 200 ] || bad "image.php?cmd=$ex not 200"; done
+  [ "$(code "$IU?cmd=https%3A%2F%2Fgithub.com%2Fo%2Fr")" = 400 ] && curl -s "$IU?cmd=https%3A%2F%2Fgithub.com%2Fo%2Fr" | grep -q 'project page' && [ "$(code "$IU?cmd=%24%28id%29")" = 400 ] && [ "$(code "$IU?id=..%2F..%2Fetc")" = 404 ] && [ "$(code "$IU?id=1793865483-1234&cmd=1")" = 200 ] \
+    && ok "image.php: a project page and \$(id) refused with a reason, a path in id refused, the stored command served" || bad "image.php refusals"
+  shot "$U/?tab=3" 1400,2300 "$W/image-$label.png" && ok "screenshot image-$label.png (tests/.work/render: it shows the hostile fixture)" || bad "screenshot image $label"
+done
+# no database yet: plain words, no scan possible
+mkdir -p "$W/image-nodb"; scenario image-nodb "$PORT_IMG_NODB" black; wait_up "$PORT_IMG_NODB" || bad "image no-db harness"
+DOM=$(dom "http://127.0.0.1:$PORT_IMG_NODB/?tab=3")
+grep -q 'The vulnerability database is not on this server yet. Run a first scan from Settings, CVE Lens' <<<"$DOM" && grep -q 'id="uts-scan" disabled=""' <<<"$DOM" && grep -q 'No image has been scanned yet' <<<"$DOM" \
+  && ok "image tab without a database: says to run a first scan from Settings, Scan disabled, nothing downloaded" || bad "image tab no-db: $(grep -o 'id="uts-status">[^<]*' <<<"$DOM")"
+# Unraid 6.12.15 layout
+img_scenario image-612 "$PORT_IMG_612" white 6.12
+DOM=$(dom "http://127.0.0.1:$PORT_IMG_612/?tab=3")
+grep -q '>Resolved as<' <<<"$DOM" && grep -q 'What to enter' <<<"$DOM" && grep -q 'uts-cmd-pre' <<<"$DOM" && ok "image tab renders in the 6.12.15 webGui layout" || bad "image tab 6.12"
+shot "http://127.0.0.1:$PORT_IMG_612/?tab=3" 1400,2300 "$W/page-612-3-light.png" && ok "screenshot page-612-3-light.png (tests/.work/render)" || bad "screenshot image 6.12"
 
 # ---------------------------------------------------------------- empty state
 E=$W/empty; mkdir -p "$E"; scenario empty "$PORT_EMPTY" black; wait_up "$PORT_EMPTY" || bad "empty harness"

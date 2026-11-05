@@ -9,7 +9,7 @@ $webroot = getenv('WEBROOT');
 $plug = "$webroot/plugins/unraid-cve-lens";
 $uri = parse_url($_SERVER['REQUEST_URI'], PHP_URL_PATH);
 
-if (preg_match('~^/plugins/unraid-cve-lens/include/(status|report|action|log)\.php$~', $uri, $m)) {
+if (preg_match('~^/plugins/unraid-cve-lens/include/(status|report|action|log|image)\.php$~', $uri, $m)) {
   require "$plug/include/{$m[1]}.php";
   return true;
 }
@@ -56,14 +56,14 @@ setTimeout(function () { document.querySelectorAll('a.uts-loglink').forEach(func
 <?php else: $sel = (int)($_GET['tab'] ?? 1); ?>
 <div id="displaybox">
   <nav class="tabs" role="tablist" aria-label="Page Tabs"><div class="tabs-container">
-    <?php foreach ([1 => 'Report', 2 => 'Settings'] as $i => $t): ?>
+    <?php foreach ([1 => 'Report', 2 => 'Settings', 3 => 'Scan an image'] as $i => $t): ?>
     <button role="tab" id="tab<?=$i?>" aria-controls="tab<?=$i?>-panel" aria-selected="<?=$i === $sel ? 'true' : 'false'?>"
             onclick="location.search='?tab=<?=$i?>'"><?=$t?></button>
     <?php endforeach; ?>
   </div></nav>
   <section id="tab<?=$sel?>-panel" role="tabpanel" aria-labelledby="tab<?=$sel?>" class="tab-content content" tabindex="0" style="display:block">
     <?php /* display:block stands in for Unraid's tab script, which reveals the selected panel */ ?>
-    <?php run_page($sel === 2 ? "$plug/CveLensSettings.page" : "$plug/CveLensReport.page"); ?>
+    <?php run_page($sel === 3 ? "$plug/CveLensImage.page" : ($sel === 2 ? "$plug/CveLensSettings.page" : "$plug/CveLensReport.page")); ?>
   </section>
 </div>
 <?php endif; ?>
