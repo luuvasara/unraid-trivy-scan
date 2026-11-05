@@ -514,7 +514,7 @@ compose_check "image tab absent" "tab=1&without=CveLensImage" 1 0
 ABVER=$(sed -n 's/^ *<!ENTITY version *"\([^"]*\)">.*/\1/p' "$HERE/unraid-cve-lens.plg")
 DOM=$(dom "$C/?compose=1&tab=4")
 grep -q "id=\"uts-a-ver\">Version $ABVER<" <<<"$DOM" && grep -q 'Earlier versions' <<<"$DOM" && ! grep -q 'id="uts-a-old" hidden' <<<"$DOM" && ok "about tab: version, latest changes, earlier versions" || bad "about tab: $(grep -o 'id="uts-a-ver">[^<]*' <<<"$DOM")"
-[ "$(grep -o 'id="uts-a-latest"><li>' <<<"$DOM" | wc -l)" = 1 ] && grep -q 'forums.unraid.net/topic/201179' <<<"$DOM" && grep -q 'unraid-cve-lens/issues' <<<"$DOM" && grep -q 'unraid-cve-lens/discussions' <<<"$DOM" && grep -q 'github.com/luuvasara?tab=repositories' <<<"$DOM" && ok "about tab: changes listed, support, issues, discussions, more plugins links" || bad "about tab links"
+[ "$(grep -o 'id="uts-a-latest"><li>' <<<"$DOM" | wc -l)" = 1 ] && grep -q 'forums.unraid.net/topic/201179' <<<"$DOM" && grep -q 'unraid-cve-lens/issues' <<<"$DOM" && grep -q 'unraid-cve-lens/discussions' <<<"$DOM" && grep -q 'github.com/search?q=owner%3Aluuvasara+unraid&amp;type=repositories' <<<"$DOM" && ok "about tab: changes listed, support, issues, discussions, more plugins links" || bad "about tab links"
 grep -q 'id="uts-status">\(Idle\|Last scan\)' <<<"$DOM" && ok "about tab: the other tabs still start (shared DOM)" || bad "about tab broke the report start"
 grep -q 'data-uts-init' <<<"$(grep -o '<div class="uts" id="uts-about"[^>]*>' <<<"$DOM")" && bad "about root was started by report.js" || ok "about root is not started by report.js"
 # Unraid 6.12.15 layout
