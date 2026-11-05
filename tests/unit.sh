@@ -673,6 +673,18 @@ out=$(imenv bash "$S" scan-image 'alpine:3.19'); rc=$?
 kill "$BUSY" 2>/dev/null; rm -f "$IM/run/pid"
 ( exec 9>"$IM/run/lock"; flock -n 9; imenv bash "$S" scan-image-run 'alpine:3.19' >/dev/null 2>&1; echo $? >"$IM/busyrc" )
 [ "$(cat "$IM/busyrc")" = 3 ] && ok "the run takes the same lock as a full scan (exit 3 when held)" || bad "lock: $(cat "$IM/busyrc")"
+# the data directory cannot be written (seen on a share whose only pool was removed: mkdir says "No medium found"): a refused
+# start and a failed run are both visible, never a silent "Ready"
+mv "$IM/data/image-scan" "$IM/image-scan.hold"; printf 'x' >"$IM/data/image-scan"
+out=$(imenv bash "$S" scan-image 'alpine:3.19'); rc=$?
+[ "$rc" = 5 ] && grep -q 'cannot write to' <<<"$out" && ok "data directory not writable: exit 5, \"$out\"" || bad "not writable: rc=$rc $out"
+imenv bash "$S" scan-image-run 'alpine:3.19' >/dev/null 2>&1; rc=$?
+[ "$rc" = 1 ] && grep -q '^result=failed' "$IM/run/image-last" && grep -q 'cannot write to' "$IM/run/image-last" && ok "data directory not writable: the run records the failure in the run directory" || bad "not writable, run: rc=$rc $(cat "$IM/run/image-last" 2>&1)"
+rm -f "$IM/data/image-scan"; mv "$IM/image-scan.hold" "$IM/data/image-scan"
+UTS_DATA=$IM/data UTS_RUN=$IM/run php -r 'require $argv[1]; $l=uts_image_last(); exit($l["result"]==="failed" && strpos($l["message"],"cannot write to")===0 ? 0 : 1);' "$P/include/lib.php" \
+  && ok "uts_image_last: the newer attempt from the run directory wins over an older image-scan/last" || bad "uts_image_last: run directory attempt not shown"
+FAKE_IMG_JSON=$HERE/tests/fixtures/image-scan/trivy.json imenv bash "$S" scan-image-run 'alpine:3.20'
+[ ! -e "$IM/run/image-last" ] && grep -q '^result=ok' "$IM/data/image-scan/last" && ok "the next attempt that can write removes the run directory's note" || bad "image-last left behind"
 # stop: the existing stop ends an image scan, recorded as the image scan's own last attempt
 rm -f "$IM/data/report/last-run"
 FAKE_IMG_SLEEP=8 FAKE_IMG_JSON=$HERE/tests/fixtures/image-scan/trivy.json imenv bash "$S" scan-image 'alpine:3.19' >/dev/null

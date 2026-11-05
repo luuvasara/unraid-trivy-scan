@@ -434,6 +434,11 @@ mkdir -p "$W/image-nodb"; scenario image-nodb "$PORT_IMG_NODB" black; wait_up "$
 DOM=$(dom "http://127.0.0.1:$PORT_IMG_NODB/?tab=3")
 grep -q 'The vulnerability database is not on this server yet. Run a first scan from Settings, CVE Lens' <<<"$DOM" && grep -q 'id="uts-i-scan" disabled=""' <<<"$DOM" && grep -q 'No image scanned yet' <<<"$DOM" \
   && ok "image tab without a database: says to run a first scan from Settings, Scan disabled, nothing downloaded" || bad "image tab no-db: $(grep -o 'id="uts-i-status">[^<]*' <<<"$DOM")"
+# a failure that could not be written to the data directory (run/image-last) is on the page, not "Ready"
+FD=$W/image-black
+printf 'result=failed\nended=%s\nref=alpine:3.20\nid=\nmessage=cannot write to /x/image-scan (No medium found): check the appdata location\n' "$(date +%s)" >"$FD/run/image-last"
+DOM=$(dom "http://127.0.0.1:$PORT_IMG_DARK/?tab=3"); rm -f "$FD/run/image-last"
+grep -qE 'id="uts-i-status">Last image scan failed [^<]*\(alpine:3.20\): cannot write to /x/image-scan \(No medium found\)' <<<"$DOM" && ok "image tab: a failure kept in the run directory is shown" || bad "image tab, run directory failure: $(grep -o 'id="uts-i-status">[^<]*' <<<"$DOM")"
 # The example buttons keep the case of the image name: Unraid's themes upper-case buttons, and upper case is not a valid image name
 for t in "white:$PORT_IMG_LIGHT" "black:$PORT_IMG_DARK"; do
   DOM=$(dom "http://127.0.0.1:${t#*:}/?tab=3&probe=1"); x=$(grep -o 'data-ex="[^"]*"' <<<"$DOM")
