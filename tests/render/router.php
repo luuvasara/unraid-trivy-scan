@@ -10,6 +10,7 @@ $plug = "$webroot/plugins/unraid-cve-lens";
 $uri = parse_url($_SERVER['REQUEST_URI'], PHP_URL_PATH);
 
 if (preg_match('~^/plugins/unraid-cve-lens/include/(status|report|action|log|image)\.php$~', $uri, $m)) {
+  if (($rl = getenv('UTS_RUN')) !== false && $rl !== '') @file_put_contents(dirname($rl) . '/requests.log', $m[1] . ' ' . ($_SERVER['QUERY_STRING'] ?? '') . "\n", FILE_APPEND);   // which endpoints the page really called
   require "$plug/include/{$m[1]}.php";
   return true;
 }
@@ -40,6 +41,9 @@ if ($legacy && preg_match('~<style>(.*?)</style>~s', (string)@file_get_contents(
 <?php foreach ($styles as $c): ?><link rel="stylesheet" href="/webGui/styles/<?=$c?>.css">
 <?php endforeach; ?>
 <script>var csrf_token = <?=json_encode($var['csrf_token'] ?? '')?>; function done() {}</script>
+<?php if (isset($_GET['probe'])): /* writes the computed text-transform and font of the first example button into <html> */ ?>
+<script>window.addEventListener('load', function () { setTimeout(function () { var b = document.querySelector('button.uts-ex'), c = b && getComputedStyle(b); document.documentElement.setAttribute('data-ex', c ? c.textTransform + '|' + c.fontFamily.split(',')[0].replace(/["']/g, '') + '|' + b.getBoundingClientRect().width : 'none'); }, 1500); });</script>
+<?php endif; ?>
 <?php if (isset($_GET['fake_terminal'])): /* stands in for the webGui's openTerminal(); records the call, then "clicks" every View log link */ ?>
 <script>function openTerminal(t, n, m) { var h = document.documentElement; h.setAttribute('data-term', (h.getAttribute('data-term') || '') + '[' + [t, n, m].join('|') + ']'); }
 setTimeout(function () { document.querySelectorAll('a.uts-loglink').forEach(function (a) { a.click(); }); }, 2500);</script>
@@ -53,6 +57,14 @@ setTimeout(function () { document.querySelectorAll('a.uts-loglink').forEach(func
 <div class="frame"><div class="grid"><div class="tile" id="tile3"><table id="db_box3" class="<?=$legacy ? 'share_status dashboard' : 'dashboard'?>">
 <?php run_page("$plug/CveLensDash.page"); foreach (($mytiles ?? []) as $t) echo $t['column3'] ?? ''; ?>
 </table></div></div></div>
+<?php elseif (isset($_GET['compose'])): /* Unraid's composition (DefaultPageLayout.php): every tab's page body, one after the other, in one document: div.tabs > div.tab > input radio + label + div.content; the pages that are not selected are hidden. Each page includes its own script tag, so report.js is included once per tab. */ ?>
+<div class="tabs">
+<?php foreach ([1 => ['Report', 'CveLensReport'], 2 => ['Settings', 'CveLensSettings'], 3 => ['Scan an image', 'CveLensImage']] as $i => [$t, $f]): if (isset($_GET['without']) && $_GET['without'] === $f) continue; ?>
+  <div class='tab'><input type='radio' id='tab<?=$i?>' name='tabs' <?=$i === (int)($_GET['tab'] ?? 1) ? 'checked' : ''?>><label for='tab<?=$i?>'><?=$t?></label><div class='content' style='display:<?=$i === (int)($_GET['tab'] ?? 1) ? 'block' : 'none'?>'>
+<?php run_page("$plug/$f.page"); ?>
+  </div></div>
+<?php endforeach; ?>
+</div>
 <?php else: $sel = (int)($_GET['tab'] ?? 1); ?>
 <div id="displaybox">
   <nav class="tabs" role="tablist" aria-label="Page Tabs"><div class="tabs-container">

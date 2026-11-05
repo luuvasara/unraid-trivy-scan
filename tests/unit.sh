@@ -661,6 +661,10 @@ mv "$IM/data/cache/db/trivy.db" "$IM/trivy.db.hold"; : >"$W/docker.log"
 out=$(imenv bash "$S" scan-image 'alpine:3.19'); rc=$?
 [ "$rc" = 4 ] && grep -q 'run a first scan from Settings' <<<"$out" && ok "no database: exit 4, \"$out\"" || bad "no database: rc=$rc $out"
 imenv bash "$S" scan-image-run 'alpine:3.19'; grep -q 'first scan from Settings' "$IM/data/image-scan/last" && ! grep -qE 'docker (run|pull)' "$W/docker.log" && ok "no database: the run says so and downloads nothing" || bad "no database run: $(cat "$IM/data/image-scan/last"); $(cat "$W/docker.log")"
+printf 'JAVA_DB="no"\nOS_SCAN="no"\nTRIVY_DB_KEEP="no"\n' >"$IM/flash/cfg"
+out=$(imenv bash "$S" scan-image 'alpine:3.19'); rc=$?
+[ "$rc" = 4 ] && grep -q 'TRIVY_DB_KEEP=no' <<<"$out" && grep -q 'Download for every scan' <<<"$out" && ok "no database with TRIVY_DB_KEEP=no: the message names the setting" || bad "no database, keep=no: rc=$rc $out"
+printf 'JAVA_DB="no"\nOS_SCAN="no"\n' >"$IM/flash/cfg"
 mv "$IM/trivy.db.hold" "$IM/data/cache/db/trivy.db"
 # one at a time, and never together with a full scan
 bash -c 'exec -a cve-lens-busy sleep 30' & BUSY=$!; echo $BUSY >"$IM/run/pid"

@@ -15,7 +15,7 @@
 #            of that release): the tile uses the older header markup there
 #   progress the run panel: a fake running scan (steps, download sample, log), the idle summary, "View log" (Unraid's
 #            openTerminal when present, else include/log.php), and log.php itself
-# RENDER_PORT_BASE=<port> (default 18731): the harness listens on this port and the next 17, so runs in several
+# RENDER_PORT_BASE=<port> (default 18731): the harness listens on this port and the next 20, so runs in several
 # checkouts at the same time can use separate ranges.
 set -uo pipefail
 HERE=$(cd "$(dirname "$0")/../.." && pwd)
@@ -30,7 +30,7 @@ PORT_HOSTILE=$PB PORT_DEMO_LIGHT=$((PB + 1)) PORT_DEMO_DARK=$((PB + 2)) PORT_EMP
 PORT_IGNORE_LIGHT=$((PB + 5)) PORT_IGNORE_DARK=$((PB + 6))
 PORT_PROG_LIGHT=$((PB + 7)) PORT_PROG_DARK=$((PB + 8)) PORT_PROG_IDLE=$((PB + 9))
 PORT_SCAN_LIGHT=$((PB + 10)) PORT_SCAN_DARK=$((PB + 11)) PORT_612_LIGHT=$((PB + 12)) PORT_612_DARK=$((PB + 13))
-PORT_IMG_LIGHT=$((PB + 14)) PORT_IMG_DARK=$((PB + 15)) PORT_IMG_612=$((PB + 16)) PORT_IMG_NODB=$((PB + 17))
+PORT_IMG_LIGHT=$((PB + 14)) PORT_IMG_DARK=$((PB + 15)) PORT_IMG_612=$((PB + 16)) PORT_IMG_NODB=$((PB + 17)) PORT_IMG_GRAY=$((PB + 18)) PORT_IMG_AZURE=$((PB + 19)) PORT_IMG_COMPOSE=$((PB + 20))
 "$HERE/tests/render/fetch-webgui.sh" >/dev/null || { echo "FAIL cannot fetch webGui styles"; exit 1; }
 "$HERE/tests/render/fetch-webgui.sh" 6.12 >/dev/null || { echo "FAIL cannot fetch the 6.12.15 webGui styles"; exit 1; }
 
@@ -406,14 +406,14 @@ for theme in white black; do
   img_scenario "image-$theme" "$port" "$theme"
   U=http://127.0.0.1:$port
   RAW=$(curl -s "$U/?tab=3"); DOM=$(dom "$U/?tab=3#open=CVE-2024-0101")
-  grep -q 'id="uts-imgref"' <<<"$RAW" && grep -q 'Scan an image' <<<"$(curl -s "$U/?tab=1")" && ok "image tab ($theme): the tab exists next to Report and Settings, the page has the input" || bad "image tab ($theme): input or tab"
+  grep -q 'id="uts-i-imgref"' <<<"$RAW" && grep -q 'Scan an image' <<<"$(curl -s "$U/?tab=1")" && ok "image tab ($theme): the tab exists next to Report and Settings, the page has the input" || bad "image tab ($theme): input or tab"
   no_payload "image tab DOM ($theme)" "$DOM"; check_text "image result ($theme)" "$DOM" title1 pkg1 target
   for t in 'What to enter' 'How to find it' 'A Community Apps app' 'is an XML template, not an image' 'A compose file' 'build:' 'A GitHub project' 'A similarly named image can belong to someone else' 'the row <strong>Repository</strong>' 'choose <strong>Edit</strong>' '<strong>Advanced View</strong>' 'not part of an image scan'; do
     grep -qF "$t" <<<"$RAW" || bad "image tab ($theme): help text '$t' missing"
   done; ok "image tab ($theme): help names the four things, the CA Repository row, Docker tab Edit, compose image:, GitHub docs, and that Grype is not part of an image scan"
   [ "$(grep -o 'class="uts-ex"' <<<"$RAW" | wc -l)" = 4 ] && grep -q 'data-ref="postgres:17"' <<<"$RAW" && grep -q 'data-ref="lscr.io/linuxserver/sonarr:latest"' <<<"$RAW" && grep -q 'data-ref="ghcr.io/home-assistant/home-assistant:stable"' <<<"$RAW" && grep -q 'data-ref="alpine:3.20"' <<<"$RAW" \
     && ok "image tab ($theme): four examples (Docker Hub short name, lscr.io, ghcr.io, version tag) that fill the field" || bad "image tab ($theme): examples"
-  grep -q 'Vulnerability database from 2026-11-05' <<<"$DOM" && ! grep -q 'id="uts-scan" disabled=""' <<<"$DOM" && ok "image tab ($theme): status shows the database date, Scan enabled" || bad "image tab ($theme): status: $(grep -o 'id="uts-status">[^<]*' <<<"$DOM")"
+  grep -q 'Vulnerability database from 2026-11-05' <<<"$DOM" && ! grep -q 'id="uts-i-scan" disabled=""' <<<"$DOM" && ok "image tab ($theme): status shows the database date, Scan enabled" || bad "image tab ($theme): status: $(grep -o 'id="uts-i-status">[^<]*' <<<"$DOM")"
   grep -q '>Resolved as<' <<<"$DOM" && grep -q 'docker.io/library/alpine:latest' <<<"$DOM" && grep -q 'resolved as docker.io/library/alpine: the Docker Hub official image' <<<"$DOM" && grep -q 'No tag was given, so latest was scanned' <<<"$DOM" \
     && grep -q '>Digest scanned<' <<<"$DOM" && grep -q '>Vulnerability database<' <<<"$DOM" && ok "image result ($theme): resolved name, digest, database date and the warning for a bare name" || bad "image result ($theme): header: $(tr -d '\n' <<<"$DOM" | grep -o 'uts-imgfacts.\{0,600\}')"
   grep -q 'It says nothing about how an app is configured when you run it' <<<"$DOM" && ok "image result ($theme): coverage note" || bad "image result ($theme): coverage note"
@@ -432,8 +432,49 @@ done
 # no database yet: plain words, no scan possible
 mkdir -p "$W/image-nodb"; scenario image-nodb "$PORT_IMG_NODB" black; wait_up "$PORT_IMG_NODB" || bad "image no-db harness"
 DOM=$(dom "http://127.0.0.1:$PORT_IMG_NODB/?tab=3")
-grep -q 'The vulnerability database is not on this server yet. Run a first scan from Settings, CVE Lens' <<<"$DOM" && grep -q 'id="uts-scan" disabled=""' <<<"$DOM" && grep -q 'No image has been scanned yet' <<<"$DOM" \
-  && ok "image tab without a database: says to run a first scan from Settings, Scan disabled, nothing downloaded" || bad "image tab no-db: $(grep -o 'id="uts-status">[^<]*' <<<"$DOM")"
+grep -q 'The vulnerability database is not on this server yet. Run a first scan from Settings, CVE Lens' <<<"$DOM" && grep -q 'id="uts-i-scan" disabled=""' <<<"$DOM" && grep -q 'No image scanned yet' <<<"$DOM" \
+  && ok "image tab without a database: says to run a first scan from Settings, Scan disabled, nothing downloaded" || bad "image tab no-db: $(grep -o 'id="uts-i-status">[^<]*' <<<"$DOM")"
+# The example buttons keep the case of the image name: Unraid's themes upper-case buttons, and upper case is not a valid image name
+for t in "white:$PORT_IMG_LIGHT" "black:$PORT_IMG_DARK"; do
+  DOM=$(dom "http://127.0.0.1:${t#*:}/?tab=3&probe=1"); x=$(grep -o 'data-ex="[^"]*"' <<<"$DOM")
+  [[ $x == 'data-ex="none|ui-monospace|'* ]] && ok "example buttons (${t%%:*} theme): text-transform none, monospace ($x)" || bad "example buttons (${t%%:*}): $x"
+done
+for theme in gray azure; do
+  port=$([ $theme = gray ] && echo $PORT_IMG_GRAY || echo $PORT_IMG_AZURE)
+  img_scenario "image-$theme" "$port" "$theme"
+  x=$(grep -o 'data-ex="[^"]*"' <<<"$(dom "http://127.0.0.1:$port/?tab=3&probe=1")")
+  [[ $x == 'data-ex="none|ui-monospace|'* ]] && ok "example buttons ($theme theme): text-transform none, monospace ($x)" || bad "example buttons ($theme): $x"
+done
+# Unraid puts every tab of the page into ONE document and each tab page includes report.js: the Report tab, Settings and the
+# image tab here, composed as DefaultPageLayout.php does (div.tabs > div.tab > div.content, the other tabs hidden). The image
+# tab must start on its own (image.php is asked, Scan image is enabled), nothing may be started twice, and either tab may be
+# absent. The same composition is used under Vulnerabilities (SHOW_TAB=yes) and under Settings, CVE Lens.
+img_scenario image-compose "$PORT_IMG_COMPOSE" white
+C=http://127.0.0.1:$PORT_IMG_COMPOSE; CW=$W/image-compose
+mkdir -p "$CW/data/report"; cp "$W/demo-white/data/report/report.json" "$CW/data/report/report.json"
+count() { grep -c "$1" "$CW/requests.log" 2>/dev/null || true; }
+compose_check() {   # compose_check <label> <query> <report present 0|1> <image present 0|1>
+  : >"$CW/requests.log"
+  local raw dom_ n; raw=$(curl -s "$C/?compose=1&$2"); dom_=$(dom "$C/?compose=1&$2")
+  n=$(grep -c '<script src="/plugins/unraid-cve-lens/assets/report.js' <<<"$raw")
+  [ "$n" = $(( $3 + $4 )) ] && ok "composed page ($1): report.js included once per tab ($n)" || bad "composed page ($1): $n script tags"
+  if [ "$4" = 1 ]; then
+    grep -q 'id="uts-i-status">[^<]*Vulnerability database from 2026-11-05' <<<"$dom_" && ! grep -q 'id="uts-i-scan" disabled=""' <<<"$dom_" && grep -q '>Resolved as<' <<<"$dom_" \
+      && [ "$(count '^image $')" = 1 ] && ok "composed page ($1): the image tab starts on its own: image.php asked once, Scan image enabled, result shown" \
+      || bad "composed page ($1): image tab dead: $(grep -o 'id="uts-i-status">[^<]*' <<<"$dom_"); requests: $(tr '\n' ',' <"$CW/requests.log")"
+  fi
+  if [ "$3" = 1 ]; then
+    grep -q 'class="uts-row' <<<"$dom_" && grep -qE 'id="uts-status">(Idle|Last scan)' <<<"$dom_" && [ "$(count '^status ')" = 1 ] && [ "$(count '^report ')" = 1 ] \
+      && ok "composed page ($1): the Report tab is unchanged and polled once (no double start)" || bad "composed page ($1): report tab: $(grep -o 'id="uts-status">[^<]*' <<<"$dom_"); requests: $(tr '\n' ',' <"$CW/requests.log")"
+  fi
+  [ "$(grep -o 'id="uts-body"' <<<"$dom_" | wc -l)" -le 1 ] && [ "$(grep -o 'id="uts-fix"' <<<"$dom_" | wc -l)" -le 1 ] && [ "$(grep -o 'id="uts-i-fix"' <<<"$dom_" | wc -l)" -le 1 ] \
+    && ok "composed page ($1): no duplicate ids between the tabs" || bad "composed page ($1): duplicate ids"
+}
+compose_check "Report shown, image tab hidden at load" "tab=1" 1 1
+compose_check "image tab shown" "tab=3" 1 1
+compose_check "Report tab absent" "tab=3&without=CveLensReport" 0 1
+compose_check "image tab absent" "tab=1&without=CveLensImage" 1 0
+
 # Unraid 6.12.15 layout
 img_scenario image-612 "$PORT_IMG_612" white 6.12
 DOM=$(dom "http://127.0.0.1:$PORT_IMG_612/?tab=3")
