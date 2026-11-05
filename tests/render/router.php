@@ -59,7 +59,7 @@ setTimeout(function () { document.querySelectorAll('a.uts-loglink').forEach(func
 </table></div></div></div>
 <?php elseif (isset($_GET['compose'])): /* Unraid's composition (DefaultPageLayout.php): every tab's page body, one after the other, in one document: div.tabs > div.tab > input radio + label + div.content; the pages that are not selected are hidden. Each page includes its own script tag, so report.js is included once per tab. */ ?>
 <div class="tabs">
-<?php foreach ([1 => ['Report', 'CveLensReport'], 2 => ['Settings', 'CveLensSettings'], 3 => ['Scan an image', 'CveLensImage']] as $i => [$t, $f]): if (isset($_GET['without']) && $_GET['without'] === $f) continue; ?>
+<?php foreach ([1 => ['Report', 'CveLensReport'], 2 => ['Settings', 'CveLensSettings'], 3 => ['Scan an image', 'CveLensImage'], 4 => ['About', 'CveLensAbout']] as $i => [$t, $f]): if (isset($_GET['without']) && $_GET['without'] === $f) continue; ?>
   <div class='tab'><input type='radio' id='tab<?=$i?>' name='tabs' <?=$i === (int)($_GET['tab'] ?? 1) ? 'checked' : ''?>><label for='tab<?=$i?>'><?=$t?></label><div class='content' style='display:<?=$i === (int)($_GET['tab'] ?? 1) ? 'block' : 'none'?>'>
 <?php run_page("$plug/$f.page"); ?>
   </div></div>
@@ -68,14 +68,14 @@ setTimeout(function () { document.querySelectorAll('a.uts-loglink').forEach(func
 <?php else: $sel = (int)($_GET['tab'] ?? 1); ?>
 <div id="displaybox">
   <nav class="tabs" role="tablist" aria-label="Page Tabs"><div class="tabs-container">
-    <?php foreach ([1 => 'Report', 2 => 'Settings', 3 => 'Scan an image'] as $i => $t): ?>
+    <?php foreach ([1 => 'Report', 2 => 'Settings', 3 => 'Scan an image', 4 => 'About'] as $i => $t): ?>
     <button role="tab" id="tab<?=$i?>" aria-controls="tab<?=$i?>-panel" aria-selected="<?=$i === $sel ? 'true' : 'false'?>"
             onclick="location.search='?tab=<?=$i?>'"><?=$t?></button>
     <?php endforeach; ?>
   </div></nav>
   <section id="tab<?=$sel?>-panel" role="tabpanel" aria-labelledby="tab<?=$sel?>" class="tab-content content" tabindex="0" style="display:block">
     <?php /* display:block stands in for Unraid's tab script, which reveals the selected panel */ ?>
-    <?php run_page($sel === 3 ? "$plug/CveLensImage.page" : ($sel === 2 ? "$plug/CveLensSettings.page" : "$plug/CveLensReport.page")); ?>
+    <?php run_page($sel === 4 ? "$plug/CveLensAbout.page" : ($sel === 3 ? "$plug/CveLensImage.page" : ($sel === 2 ? "$plug/CveLensSettings.page" : "$plug/CveLensReport.page"))); ?>
   </section>
 </div>
 <?php endif; ?>

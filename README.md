@@ -113,6 +113,8 @@ You can also install CVE Lens directly and remove the old entry by hand; the sam
   show "no fix" for that reason.
 - Scan an image: type an image reference (`lscr.io/linuxserver/sonarr:latest`, `postgres:17`) on its own tab and get the
   vulnerability report for it from the registry, without installing, pulling or running it. See [Scan an image](#scan-an-image).
+- About tab: the installed version, the latest changes and the support links. A plugin update shows what changed in the
+  update window.
 - Dashboard tile, optional header tab, Unraid notification when new fixable critical CVEs appear, and when a CVE on
   the KEV list newly affects a container image.
 - Follows the active Unraid theme (black, white, gray, azure) through the theme's CSS variables.

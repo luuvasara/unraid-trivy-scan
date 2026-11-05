@@ -2,6 +2,9 @@
 
 Copied by build.sh from the <CHANGES> block of unraid-cve-lens.plg; edit the .plg, not this file.
 
+## 2026.11.05a
+- New "About" tab with the installed version, the latest changes and the support links.
+- The plugin update window now shows what changed, in its own box, instead of the first-install text. The first-install text only appears on a first install.
 ## 2026.11.05
 - New "Scan an image" tab: enter an image name such as `lscr.io/linuxserver/sonarr:latest` and get its vulnerability list straight from the registry, without installing or pulling it.
 - The tab explains what to enter, where to find the image name, and shows the exact command it runs.
