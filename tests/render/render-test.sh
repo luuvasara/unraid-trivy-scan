@@ -439,6 +439,21 @@ FD=$W/image-black
 printf 'result=failed\nended=%s\nref=alpine:3.20\nid=\nmessage=cannot write to /x/image-scan (No medium found): check the appdata location\n' "$(date +%s)" >"$FD/run/image-last"
 DOM=$(dom "http://127.0.0.1:$PORT_IMG_DARK/?tab=3"); rm -f "$FD/run/image-last"
 grep -qE 'id="uts-i-status">Last image scan failed [^<]*\(alpine:3.20\): cannot write to /x/image-scan \(No medium found\)' <<<"$DOM" && ok "image tab: a failure kept in the run directory is shown" || bad "image tab, run directory failure: $(grep -o 'id="uts-i-status">[^<]*' <<<"$DOM")"
+# after a failed or stopped scan the previous image's result is not under the message; it stays in the Earlier results list
+grep -q 'id="uts-i-noresult">The scan of alpine:3.20 failed, so there is no result for it' <<<"$DOM" && ! grep -q '>Digest scanned<' <<<"$DOM" && ! grep -q 'uts-cves' <<<"$DOM" \
+  && ok "image tab: a failed scan replaces the previous result" || bad "image tab, failed scan keeps the old result: $(grep -o 'id="uts-i-noresult"[^<]*' <<<"$DOM")"
+grep -qE 'id="uts-i-imgprev"( class="[^"]*")?>' <<<"$DOM" && grep -q 'Choose an earlier result' <<<"$DOM" && ok "image tab: after a failed scan the earlier result can be chosen from the list" || bad "image tab: earlier results list missing after a failed scan"
+printf 'result=failed\nended=%s\nref=sonarr\nid=\nmessage=the registry refused access\n' "$(date +%s)" >"$FD/run/image-last"
+DOM=$(dom "http://127.0.0.1:$PORT_IMG_DARK/?tab=3")
+grep -q 'id="uts-i-barehint"' <<<"$DOM" && grep -q 'resolved as docker.io/library/sonarr' <<<"$DOM" && grep -q 'for example lscr.io/linuxserver/sonarr' <<<"$DOM" && grep -q 'Enter the full image name' <<<"$DOM" \
+  && ok "image tab: a failed bare name gets the hint to enter the full image name" || bad "image tab: no bare-name hint: $(grep -o 'id="uts-i-noresult"[^<]*' <<<"$DOM")"
+printf 'result=failed\nended=%s\nref=lscr.io/linuxserver/sonarr:latest\nid=\nmessage=the registry refused access\n' "$(date +%s)" >"$FD/run/image-last"
+DOM=$(dom "http://127.0.0.1:$PORT_IMG_DARK/?tab=3")
+grep -q 'id="uts-i-noresult"' <<<"$DOM" && ! grep -q 'id="uts-i-barehint"' <<<"$DOM" && ok "image tab: a failed full image name gets no bare-name hint" || bad "image tab: bare-name hint on a full name"
+printf 'result=stopped\nended=%s\nref=sonarr\nid=\nmessage=stopped\n' "$(date +%s)" >"$FD/run/image-last"
+DOM=$(dom "http://127.0.0.1:$PORT_IMG_DARK/?tab=3"); rm -f "$FD/run/image-last"
+grep -q 'The scan of sonarr was stopped, so there is no result for it' <<<"$DOM" && ! grep -q '>Digest scanned<' <<<"$DOM" && ! grep -q 'id="uts-i-barehint"' <<<"$DOM" \
+  && ok "image tab: a stopped scan shows no old result and no bare-name hint" || bad "image tab, stopped scan: $(grep -o 'id="uts-i-noresult"[^<]*' <<<"$DOM")"
 # The example buttons keep the case of the image name: Unraid's themes upper-case buttons, and upper case is not a valid image name
 for t in "white:$PORT_IMG_LIGHT" "black:$PORT_IMG_DARK"; do
   DOM=$(dom "http://127.0.0.1:${t#*:}/?tab=3&probe=1"); x=$(grep -o 'data-ex="[^"]*"' <<<"$DOM")

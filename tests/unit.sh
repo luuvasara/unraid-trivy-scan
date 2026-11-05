@@ -679,6 +679,9 @@ kill "$BUSY" 2>/dev/null; rm -f "$IM/run/pid"
 mv "$IM/data/image-scan" "$IM/image-scan.hold"; printf 'x' >"$IM/data/image-scan"
 out=$(imenv bash "$S" scan-image 'alpine:3.19'); rc=$?
 [ "$rc" = 5 ] && grep -q 'cannot write to' <<<"$out" && ok "data directory not writable: exit 5, \"$out\"" || bad "not writable: rc=$rc $out"
+grep -q '^result=failed' "$IM/run/image-last" && grep -qx 'ref=alpine:3.19' "$IM/run/image-last" && grep -q 'cannot write to' "$IM/run/image-last" \
+  && ok "data directory not writable: the refused start is recorded, so the page drops the previous result" || bad "not writable, start: $(cat "$IM/run/image-last" 2>&1)"
+rm -f "$IM/run/image-last"
 imenv bash "$S" scan-image-run 'alpine:3.19' >/dev/null 2>&1; rc=$?
 [ "$rc" = 1 ] && grep -q '^result=failed' "$IM/run/image-last" && grep -q 'cannot write to' "$IM/run/image-last" && ok "data directory not writable: the run records the failure in the run directory" || bad "not writable, run: rc=$rc $(cat "$IM/run/image-last" 2>&1)"
 rm -f "$IM/data/image-scan"; mv "$IM/image-scan.hold" "$IM/data/image-scan"

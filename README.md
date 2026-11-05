@@ -251,15 +251,15 @@ socket, `--cap-drop ALL`, `no-new-privileges`, the vulnerability database mounte
 --offline-scan --skip-db-update --scanners vuln`, and the plugin's labels and time limit. Registry logins are mounted
 only with "Use registry logins", as for the registry check. Only Trivy runs: the OS package match (Grype) is not part of an
 image scan. The tab shows the command for the name you type and, with each result, the command that was used. It is
-printed from the argument list the script itself passes to `docker run` (`scan-image-cmd`; a test compares it with the
-real call), so the two cannot drift. Paths, run ids, labels and the time limit differ on your system; credentials are never
+printed from the argument list the script itself passes to `docker run` (`scan-image-cmd`), so the two cannot
+drift. Paths, run ids, labels and the time limit differ on your system; credentials are never
 shown (a login mount appears as a note only).
 
 **Rules.**
 
 - The reference is validated in PHP and in bash with Docker's reference grammar, default deny (at most 300 characters,
   ASCII, no leading `-`, no whitespace or shell metacharacters), and handed over as one argument after `--`, never through a
-  shell string. Both validators are tested against the same list (`tests/fixtures/image-refs.txt`).
+  shell string.
 - The vulnerability database must already be on the server. If it is not, the tab says to run a first scan from
   Settings, CVE Lens; nothing is downloaded for an image scan. The result shows the database date.
 - One scan at a time, never together with a full scan or a database update (the same lock); the tab says so when busy.
@@ -267,7 +267,9 @@ shown (a login mount appears as a note only).
 - The result is kept apart: `<data dir>/image-scan/<run id>/` (`report.json`, `meta`, `cmd`), the last 5 (oldest removed),
   and `image-scan/last` for the last attempt. `report.json`, the history, the trend, the ignore list, notifications and
   the dashboard tile are not touched (the ignore list is not applied to an image scan either).
-- Failures show Trivy's reason in plain words: bad reference, not found, private image, rate limit, timeout.
+- Failures show the reason in plain words: bad reference, not found, private image, rate limit, timeout. A failed or
+  stopped scan has no result, so the Result section says so instead of showing the previous image; earlier results stay
+  in the list above it. A failed bare name such as `sonarr` also gets the hint to enter the full image name.
 
 The scan covers the image as published now, for the tag you name. It says nothing about how the app is configured when you
 run it. `latest` moves: the result shows the digest that was scanned.
