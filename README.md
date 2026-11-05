@@ -498,6 +498,11 @@ Version scheme: `YYYY.MM.DD` plus an optional letter; bump `&version;` in the .p
   (about 2.7 GB). Checked: mounts and container role, findings with file paths, the package inventory, a simulated
   OS-scan timeout.
 
+## Support
+
+Questions about installing and using the plugin: the [support thread](https://forums.unraid.net/topic/201179-plugin-cve-lens-for-unraid-known-vulnerabilities-in-your-containers-and-the-os/) on the Unraid forums.
+Bugs, feature requests and pull requests: this repository.
+
 ## Thanks
 
 Thanks to [Xaero](https://forums.unraid.net/profile/84375-xaero/) for the original [trivy-scan plugin](https://forums.unraid.net/topic/200976-cvssv4-92-php-vulnerability/#comment-1640131) <!-- keep-old-name -->

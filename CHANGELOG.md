@@ -2,6 +2,11 @@
 
 Copied by build.sh from the <CHANGES> block of unraid-cve-lens.plg; edit the .plg, not this file.
 
+## 2026.11.05
+- New "Scan an image" tab: enter an image name such as `lscr.io/linuxserver/sonarr:latest` and get its vulnerability list straight from the registry, without installing or pulling it.
+- The tab explains what to enter, where to find the image name, and shows the exact command it runs.
+- It uses the databases you already have, and does not change your report, history or notifications.
+- The plugin's support link now opens its own forum thread.
 ## 2026.11.04b
 - Unraid 6.12 is supported (6.12.0 or later; it was 7.0). The Unraid OS scan failed there: Docker before version 25 does not know the mount option it used, so the option now follows the installed Docker version. The scan also skips the firmware files, which 6.12 keeps under /lib.
 - Dashboard tile: on Unraid 6.12, 7.0 and 7.1 the header now uses the same layout as the built-in tiles (the icon was cut off and the open link sat on a line of its own).

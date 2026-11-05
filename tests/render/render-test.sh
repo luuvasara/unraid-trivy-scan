@@ -439,6 +439,13 @@ FD=$W/image-black
 printf 'result=failed\nended=%s\nref=alpine:3.20\nid=\nmessage=cannot write to /x/image-scan (No medium found): check the appdata location\n' "$(date +%s)" >"$FD/run/image-last"
 DOM=$(dom "http://127.0.0.1:$PORT_IMG_DARK/?tab=3"); rm -f "$FD/run/image-last"
 grep -qE 'id="uts-i-status">Last image scan failed [^<]*\(alpine:3.20\): cannot write to /x/image-scan \(No medium found\)' <<<"$DOM" && ok "image tab: a failure kept in the run directory is shown" || bad "image tab, run directory failure: $(grep -o 'id="uts-i-status">[^<]*' <<<"$DOM")"
+# the result sits right under the status row, above the instructions, so it is seen without scrolling
+python3 -c '
+import sys
+d=sys.stdin.read()
+ids=["id=\"uts-i-scan\"","id=\"uts-i-imgprev\"","id=\"uts-i-body\"","id=\"uts-i-img-help\"",">What to enter<",">How to find it<"]
+pos=[d.find(x) for x in ids]
+sys.exit(0 if min(pos)>=0 and pos==sorted(pos) else 1)' <<<"$DOM" && ok "image tab: result directly under the status row, above the instructions" || bad "image tab: result is not above the instructions"
 # after a failed or stopped scan the previous image's result is not under the message; it stays in the Earlier results list
 grep -q 'id="uts-i-noresult">The scan of alpine:3.20 failed, so there is no result for it' <<<"$DOM" && ! grep -q '>Digest scanned<' <<<"$DOM" && ! grep -q 'uts-cves' <<<"$DOM" \
   && ok "image tab: a failed scan replaces the previous result" || bad "image tab, failed scan keeps the old result: $(grep -o 'id="uts-i-noresult"[^<]*' <<<"$DOM")"
