@@ -382,9 +382,18 @@ printf '#!/bin/sh\nexit 1\n' >"$W/bin/docker-down"; MISSING=$W/not-mounted/appda
 PATH="$W/bin:$PATH" UTS_DATA=$MISSING/unraid-cve-lens UTS_RUN=$W/run-miss UTS_LOG=$W/miss.log UTS_CFG=$W/none.cfg bash "$S" run
 RC=$?
 [ "$RC" = 1 ] && [ ! -e "$W/not-mounted" ] && grep -q 'does not exist' "$W/miss.log" && ok "missing appdata parent: scan refuses (rc 1), logs why, creates nothing" || bad "missing parent: rc=$RC, $(ls "$W/not-mounted" 2>&1), $(cat "$W/miss.log" 2>&1)"
+grep -q '^result=failed' "$W/run-miss/last-run" && grep -q 'The array is stopped, or the Docker appdata location is not available' "$W/run-miss/last-run" && ok "missing appdata parent: the failure is kept in the run directory, so the page shows it" || bad "missing parent: no run/last-run"
 FDOCK=$W/bin2; mkdir -p "$FDOCK"; printf '#!/bin/sh\nexit 1\n' >"$FDOCK/docker"; chmod 755 "$FDOCK/docker"
 PATH="$FDOCK:$PATH" UTS_DATA=$MISSING/unraid-cve-lens UTS_RUN=$W/run-miss UTS_LOG=$W/miss.log UTS_CFG=$W/none.cfg bash "$S" run
 [ ! -e "$W/not-mounted" ] && ok "Docker down AND appdata missing: still nothing created (array-stopped cron run)" || bad "created $W/not-mounted"
+MSG_SH=$(sed -n "s/^MSG_DOCKER='\(.*\)'$/\1/p" "$S"); MSG_PHP=$(php -r "require '$P/include/lib.php'; echo UTS_MSG_DOCKER;")
+[ -n "$MSG_SH" ] && [ "$MSG_SH" = "$MSG_PHP" ] && ok "Docker message: script and page say the same" || bad "Docker message differs: [$MSG_SH] [$MSG_PHP]"
+M1=$(UTS_DATA=$MISSING/unraid-cve-lens UTS_RUN=$W/run-miss UTS_LOG=$W/miss.log UTS_CFG=$W/none.cfg bash -c 'source <(sed -n "/^msg_appdata()/p" "$0"); DATA=$UTS_DATA; msg_appdata' "$S"); M2=$(UTS_DATA=$MISSING/unraid-cve-lens php -r "require '$P/include/lib.php'; echo uts_msg_appdata();")
+[ -n "$M1" ] && [ "$M1" = "$M2" ] && ok "appdata message: script and page say the same" || bad "appdata message differs: [$M1] [$M2]"
+# Docker stopped, the data directory is there: the failure with the instruction is in last-run, and a later good run clears a tmpfs note
+DD=$W/dockerdown/unraid-cve-lens; mkdir -p "$DD"
+PATH="$FDOCK:$PATH" UTS_DATA=$DD UTS_RUN=$W/run-dd UTS_LOG=$W/dd.log UTS_CFG=$W/none.cfg bash "$S" run; RC=$?
+[ "$RC" = 1 ] && grep -qxF "message=$MSG_SH" "$DD/report/last-run" && ok "Docker stopped: last-run says how to start it" || bad "Docker stopped: rc=$RC $(cat "$DD/report/last-run" 2>&1)"
 grep -q 'uts_path(.data.))' "$P/CveLensSettings.page" && ! grep -q '<code>/mnt/user/appdata' "$P/CveLensSettings.page" && ok "settings page shows the real data directory" || bad "settings page hard-codes the data path"
 
 # ---------------------------------------------------------------- the report step runs out of memory

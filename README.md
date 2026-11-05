@@ -7,6 +7,9 @@ targets could not be scanned and why. For the OS, read [what the OS scan covers]
 Trivy cannot check Unraid's own Slackware packages, so they are matched against NVD's CPE data with Grype instead,
 which works the same way on the coming Fedora-based Unraid 8.
 
+The plugin itself is a page and a script. The scanners run as short-lived Docker containers, so Docker must be
+running. Nothing stays running between scans.
+
 | Report (light theme) | Report, one CVE expanded (dark theme) |
 |---|---|
 | ![Report, light theme](docs/screenshots/report-light.png) | ![Expanded CVE row, dark theme](docs/screenshots/report-expanded-dark.png) |
@@ -27,7 +30,7 @@ Plugins, Install Plugin, paste:
 https://raw.githubusercontent.com/luuvasara/unraid-cve-lens/main/unraid-cve-lens.plg
 ```
 
-Requires Unraid 6.12 or later. Nothing is scanned or downloaded at install time or at boot. Open
+Requires Unraid 6.12 or later, with Docker enabled and the array started. Nothing is scanned or downloaded at install time or at boot. Open
 **Settings, CVE Lens** and press **Scan now**, or set a schedule.
 
 The first scan downloads the pinned Trivy image (about 60 MB) and the vulnerability database (about 1.6 GB on

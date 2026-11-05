@@ -15,7 +15,7 @@
 #            of that release): the tile uses the older header markup there
 #   progress the run panel: a fake running scan (steps, download sample, log), the idle summary, "View log" (Unraid's
 #            openTerminal when present, else include/log.php), and log.php itself
-# RENDER_PORT_BASE=<port> (default 18731): the harness listens on this port and the next 20, so runs in several
+# RENDER_PORT_BASE=<port> (default 18731): the harness listens on this port and the next 22, so runs in several
 # checkouts at the same time can use separate ranges.
 set -uo pipefail
 HERE=$(cd "$(dirname "$0")/../.." && pwd)
@@ -31,6 +31,7 @@ PORT_IGNORE_LIGHT=$((PB + 5)) PORT_IGNORE_DARK=$((PB + 6))
 PORT_PROG_LIGHT=$((PB + 7)) PORT_PROG_DARK=$((PB + 8)) PORT_PROG_IDLE=$((PB + 9))
 PORT_SCAN_LIGHT=$((PB + 10)) PORT_SCAN_DARK=$((PB + 11)) PORT_612_LIGHT=$((PB + 12)) PORT_612_DARK=$((PB + 13))
 PORT_IMG_LIGHT=$((PB + 14)) PORT_IMG_DARK=$((PB + 15)) PORT_IMG_612=$((PB + 16)) PORT_IMG_NODB=$((PB + 17)) PORT_IMG_GRAY=$((PB + 18)) PORT_IMG_AZURE=$((PB + 19)) PORT_IMG_COMPOSE=$((PB + 20))
+PORT_NODOCKER=$((PB + 21)) PORT_NOARRAY=$((PB + 22))
 "$HERE/tests/render/fetch-webgui.sh" >/dev/null || { echo "FAIL cannot fetch webGui styles"; exit 1; }
 "$HERE/tests/render/fetch-webgui.sh" 6.12 >/dev/null || { echo "FAIL cannot fetch the 6.12.15 webGui styles"; exit 1; }
 
@@ -38,6 +39,12 @@ PIDS=()
 # shellcheck disable=SC2329  # called by the EXIT trap
 cleanup() { for p in "${PIDS[@]}"; do kill "$p" 2>/dev/null; done; }
 trap cleanup EXIT
+# stands in for Docker's socket: uts_blocked() only connects to it
+python3 -I -c '
+import socket,sys
+s=socket.socket(socket.AF_UNIX); s.bind(sys.argv[1]); s.listen(16)
+while True: s.accept()[0].close()' "$W/docker.sock" & PIDS+=($!)
+for _ in $(seq 1 50); do [ -S "$W/docker.sock" ] && break; sleep 0.1; done
 
 scenario() {   # scenario <name> <port> <theme> [6.12]: webroot + env + php -S in the background
   local name=$1 port=$2 theme=$3 gui=${4:-}
@@ -52,8 +59,8 @@ scenario() {   # scenario <name> <port> <theme> [6.12]: webroot + env + php -S i
   [ -f "$d/varini" ] || printf 'csrf_token="0123456789ABCDEF"\n' >"$d/varini"
   printf '#!/bin/sh\necho "$*" >>%s/stub.log\ncase "$1" in scan-image-cmd) exec env UTS_DATA=%s/data UTS_CFG=%s/cfg bash %s/scripts/cve-lens "$@" ;; image) echo "aquasec/trivy:0.76.1@sha256:790fd66d1697395d8693d1acaa1ea702406a20f109b6fc7bac8db623eca6c06c" ;; grype-image) echo "anchore/grype:v0.121.0@sha256:621d56d1d68106b787022c81546f7e0a36202a25d1239f0c20195fab8c16f7ea" ;; *) echo "scan started" ;; esac\n' "$d" "$d" "$d" "$P" >"$d/stub"
   chmod 755 "$d/stub"
-  env THEME="$theme" WEBGUI="$gui" WEBROOT="$d/webroot" UTS_CFG="$d/cfg" UTS_DATA="$d/data" UTS_RUN="$d/run" UTS_VARINI="$d/varini" UTS_LOG="$d/log" \
-      UTS_SCRIPT="$d/stub" TZ=UTC php -S "127.0.0.1:$port" -t "$d/webroot" "$HERE/tests/render/router.php" >"$d/php.log" 2>&1 &
+  env THEME="$theme" WEBGUI="$gui" WEBROOT="$d/webroot" UTS_CFG="$d/cfg" UTS_DATA="${SCEN_DATA:-$d/data}" UTS_RUN="$d/run" UTS_VARINI="$d/varini" UTS_LOG="$d/log" \
+      UTS_DOCKER_SOCK="${SCEN_SOCK:-$W/docker.sock}" UTS_SCRIPT="$d/stub" TZ=UTC php -S "127.0.0.1:$port" -t "$d/webroot" "$HERE/tests/render/router.php" >"$d/php.log" 2>&1 &
   PIDS+=($!)
 }
 wait_up() { local _; for _ in $(seq 1 50); do curl -s -o /dev/null "http://127.0.0.1:$1/Dashboard" && return 0; sleep 0.1; done; return 1; }
@@ -513,5 +520,34 @@ E=$W/empty; mkdir -p "$E"; scenario empty "$PORT_EMPTY" black; wait_up "$PORT_EM
 DOM=$(dom "http://127.0.0.1:$PORT_EMPTY/?tab=1")
 grep -q 'No report yet' <<<"$DOM" && ok "empty state shown without a report" || bad "empty state"
 shot "http://127.0.0.1:$PORT_EMPTY/?tab=1" 1400,600 "$SHOTS/empty-dark.png" && ok "screenshot empty-dark.png" || bad "screenshot empty"
+
+# ---------------------------------------------------------------- a scan cannot start: said on load, Scan disabled
+N=$W/nodocker; mkdir -p "$N"; python3 -I - "$N/data/cache/db" <<'PY'
+import os,sys
+os.makedirs(sys.argv[1],exist_ok=True); open(sys.argv[1]+'/trivy.db','w').write('x')
+PY
+SCEN_SOCK=$N/no.sock scenario nodocker "$PORT_NODOCKER" black; wait_up "$PORT_NODOCKER" || bad "no-docker harness"
+MSGD='Docker is not running. Scans run in containers: start Docker under Settings, Docker.'
+DOM=$(dom "http://127.0.0.1:$PORT_NODOCKER/?tab=1")
+grep -qF ">$MSGD<" <<<"$DOM" && grep -q 'No report to show' <<<"$DOM" && grep -qE 'id="uts-scan"[^>]* disabled' <<<"$DOM" \
+  && ok "report tab, Docker stopped: said on load, Scan disabled" || bad "report tab, Docker stopped: $(grep -o 'id="uts-status">[^<]*' <<<"$DOM")"
+DOM=$(dom "http://127.0.0.1:$PORT_NODOCKER/?tab=3")
+grep -qF "id=\"uts-i-status\">$MSGD" <<<"$DOM" && grep -q 'id="uts-i-scan" disabled=""' <<<"$DOM" \
+  && ok "image tab, Docker stopped: said on load, Scan disabled" || bad "image tab, Docker stopped: $(grep -o 'id="uts-i-status">[^<]*' <<<"$DOM")"
+A=$W/noarray; mkdir -p "$A"
+SCEN_DATA=$A/not-mounted/appdata/unraid-cve-lens SCEN_SOCK=$A/no.sock scenario noarray "$PORT_NOARRAY" black; wait_up "$PORT_NOARRAY" || bad "no-array harness"
+printf 'result=failed\nended=%s\nmessage=recorded in the run directory\n' "$(date +%s)" >"$A/run/last-run"
+curl -s "http://127.0.0.1:$PORT_NOARRAY/plugins/unraid-cve-lens/include/status.php" | php -r '$s=json_decode(stream_get_contents(STDIN),true); exit(($s["last"]["message"]??"")==="recorded in the run directory"?0:1);' \
+  && ok "a failure kept in the run directory is the last run" || bad "run directory last-run not read"
+DOM=$(dom "http://127.0.0.1:$PORT_NOARRAY/?tab=1")
+grep -qE 'id="uts-status">The array is stopped, or the Docker appdata location is not available \(' <<<"$DOM" && grep -qE 'id="uts-scan"[^>]* disabled' <<<"$DOM" \
+  && ok "report tab, array stopped: said on load, Scan disabled" || bad "report tab, array stopped: $(grep -o 'id="uts-status">[^<]*' <<<"$DOM")"
+DOM=$(dom "http://127.0.0.1:$PORT_NOARRAY/?tab=3")
+grep -qE 'id="uts-i-status">The array is stopped, or the Docker appdata location' <<<"$DOM" && grep -q 'id="uts-i-scan" disabled=""' <<<"$DOM" \
+  && ok "image tab, array stopped: this comes before the no-database message" || bad "image tab, array stopped: $(grep -o 'id="uts-i-status">[^<]*' <<<"$DOM")"
+DOM=$(dom "http://127.0.0.1:$PORT_NOARRAY/Dashboard")
+grep -q 'Cannot scan now' <<<"$DOM" && grep -q 'The array is stopped' <<<"$DOM" && ! grep -q 'No scan yet' <<<"$DOM" \
+  && ok "tile, array stopped: says why, not \"No scan yet\"" || bad "tile, array stopped"
+[ ! -e "$A/not-mounted" ] && ok "array stopped: the pages create nothing" || bad "pages created $A/not-mounted"
 grep -qi 'fatal\|error\|warning:\|deprecated\|notice:' "$W"/*/php.log && { bad "PHP warnings in the harness logs:"; grep -hi 'fatal\|error\|warning:\|deprecated\|notice:' "$W"/*/php.log | head -5; } || ok "no PHP errors, warnings or notices while rendering"
 exit $fail
