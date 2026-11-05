@@ -10,7 +10,13 @@ W=$HERE/tests/.work/action; rm -rf "$W"; mkdir -p "$W/root/plugins"
 fail=0; ok() { echo "ok   $*"; }; bad() { echo "FAIL $*"; fail=1; }
 TOKEN=0123456789ABCDEF
 printf 'csrf_token="%s"\n' "$TOKEN" >"$W/var.ini"
-printf '#!/bin/sh\necho "stub $1"\n' >"$W/script"; chmod 755 "$W/script"
+cat >"$W/script" <<STUB
+#!/bin/sh
+echo "\$*" >>"$W/stub.log"
+case "\$2" in busy:1) echo "a scan is already running (pid 1)"; exit 3 ;; nodb:1) echo "the vulnerability database is not on this server yet"; exit 4 ;; esac
+echo "stub \$1"
+STUB
+chmod 755 "$W/script"
 ln -s "$P" "$W/root/plugins/unraid-cve-lens"
 # The prologue is a byte-for-byte copy of Unraid 7.3.4's local_prepend.php (tests/fixtures/unraid-7.3.4, md5 checked by
 # tests/real-unraid-test.sh). It reads state/var.ini relative to its chdir('/usr/local/emhttp'); the docroot plays that directory.
@@ -54,6 +60,26 @@ R=$(ign --data-urlencode action=ignore-remove --data-urlencode cve=CVE-2025-1234
 [ "${R##* }" = 200 ] && [ "$(cat "$IG")" = "CVE-2025-1234 *" ] && ok "ignore-remove: only that entry removed" || bad "ignore-remove: $R / $(cat "$IG")"
 R=$(ign --data-urlencode action=ignore-remove --data-urlencode cve=CVE-2025-1234 --data-urlencode scope=nginx:1.19-alpine)
 [ "${R##* }" = 400 ] && ok "ignore-remove of a missing entry: 400" || bad "ignore-remove missing: $R"
+# ---- scan an image: validated twice, passed as one argument, never through a shell
+: >"$W/stub.log"
+R=$(req -H "X-CSRF-Token: $TOKEN" --data-urlencode "action=scan-image" --data-urlencode "csrf_token=$TOKEN" --data-urlencode "ref=lscr.io/linuxserver/sonarr:latest")
+[ "$R" = '{"ok":true,"message":"stub scan-image"} 200' ] && [ "$(cat "$W/stub.log")" = "scan-image lscr.io/linuxserver/sonarr:latest" ] && ok "scan-image: valid reference reaches the script as 'scan-image <ref>' ($R)" || bad "scan-image valid: $R / $(cat "$W/stub.log")"
+: >"$W/stub.log"
+for r in '--help' 'postgres;touch PWNACT' '$(touch PWNACT)' '`id`' 'file:/etc/passwd' 'docker-archive:/x.tar' 'https://github.com/o/r' 'Sonarr TV' $'a\nb' '' "$(printf 'a%.0s' $(seq 301))" '<Container/>' 'image: x'; do
+  R=$(req -H "X-CSRF-Token: $TOKEN" --data-urlencode "action=scan-image" --data-urlencode "csrf_token=$TOKEN" --data-urlencode "ref=$r")
+  [ "${R##* }" = 400 ] && grep -q '"error":"' <<<"$R" && ok "scan-image refuses $(printf %q "${r:0:40}") (400, with a reason)" || bad "scan-image '$r': $R"
+done
+R=$(req -H "X-CSRF-Token: $TOKEN" --data "action=scan-image&csrf_token=$TOKEN&ref[]=postgres")
+[ "${R##* }" = 400 ] && ok "scan-image: array reference refused" || bad "scan-image array: $R"
+R=$(req -H "X-CSRF-Token: $TOKEN" --data "action=scan-image&csrf_token=$TOKEN")
+[ "${R##* }" = 400 ] && ok "scan-image: missing reference refused" || bad "scan-image missing: $R"
+[ ! -s "$W/stub.log" ] && [ ! -e "$W/PWNACT" ] && ok "the script was never called for a refused reference, nothing ran" || bad "stub log: $(cat "$W/stub.log")"
+R=$(req -H "X-CSRF-Token: $TOKEN" --data "action=scan-image&csrf_token=$TOKEN&ref=busy:1")
+[ "${R##* }" = 409 ] && grep -q 'already running' <<<"$R" && ok "scan-image while a scan runs: 409 with the script's words" || bad "scan-image busy: $R"
+R=$(req -H "X-CSRF-Token: $TOKEN" --data "action=scan-image&csrf_token=$TOKEN&ref=nodb:1")
+[ "${R##* }" = 412 ] && grep -q 'database is not on this server' <<<"$R" && ok "scan-image without a database: 412 with the script's words" || bad "scan-image nodb: $R"
+R=$(req --data "action=scan-image&ref=postgres:17&csrf_token=WRONGWRONGWRONG0")
+[ "$R" = " 200" ] && ok "scan-image with a wrong token: stopped by the prologue" || bad "scan-image wrong token: $R"
 grep -q "X-CSRF-Token" "$P/assets/report.js" && ok "report.js sends the X-CSRF-Token header" || bad "report.js does not send X-CSRF-Token"
 # Browsers must fetch the new report.js after an update. build.sh pins every file mtime to the release day, so a
 # filemtime() cache key stayed the same between two releases of one day and kept the old (broken) script cached.

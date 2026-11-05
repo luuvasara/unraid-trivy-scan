@@ -1,0 +1,110 @@
+# want|reference: 1 valid, 0 invalid; read by tests/unit.sh for BOTH the PHP and the bash validator (same answers required)
+1|alpine
+1|postgres:17
+1|postgres:17.2-alpine3.20
+1|library/postgres
+1|lscr.io/linuxserver/sonarr:latest
+1|ghcr.io/owner/app:1.2.3
+1|ghcr.io/org/app@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+1|postgres:17@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+1|localhost:5000/my/app:dev
+1|registry.example.com:8443/a/b/c-d_e.f__g:1_2-3.4
+1|docker.io/library/alpine:3.20
+1|Registry.Example.COM/team/app
+1|a/b
+1|a.b/c
+1|my-app
+1|my--app
+1|a__b
+1|quay.io/org/img:v1.0.0-rc.1
+1|sonarr
+1|registry:2
+1|docker:27
+0|sonarr tv
+0|Sonarr
+0|Sonarr:latest
+0|postgres:17;id
+0|postgres:17 && id
+0|$(touch PWN)
+0|`touch PWN`
+0|postgres|id
+0|postgres>x
+0|postgres&
+0|'postgres'
+0|"postgres"
+0|--help
+0|-v
+0|--format=json
+0|-postgres
+0|postgres:
+0|:17
+0|postgres:-1
+0|postgres:.1
+0|postgres@
+0|postgres@sha256:xyz
+0|postgres@sha256:0123
+0|postgres@:0123456789abcdef0123456789abcdef
+0|postgres::17
+0|postgres:17:18
+0|postgres@sha256@sha256
+0|/etc/passwd
+0|../etc/passwd
+0|a/../b
+0|a//b
+0|a/
+0|/a
+0|.a
+0|a.
+0|_a
+0|a_
+0|a-
+0|-a
+0|a___b
+0|file:/etc/passwd
+0|file:foo
+0|docker-archive:/tmp/x.tar
+0|oci-archive:x.tar
+0|oci:foo
+0|dir:foo
+0|docker-daemon:foo
+0|containers-storage:foo
+0|docker://postgres
+0|https://github.com/linuxserver/docker-sonarr
+0|http://example.com/a
+0|github.com/linuxserver/docker-sonarr
+0|www.example.com/a
+0|hub.docker.com/_/postgres
+0|ca.unraid.net/apps
+0|unraid.net/community/apps
+0|<Container version="2"><Repository>x</Repository></Container>
+0|<Repository>x</Repository>
+0|image: postgres:17
+0|docker pull postgres
+0|docker run postgres
+0|postgres:latest extra
+0|tab	tab
+0|~/x
+0|\x
+0|x=1
+0|a,b
+0|é
+0|postgrès
+0|日本語
+0|[::1]:5000/a
+0|a:99999999/b
+0|:5000/a
+0|user@host/a
+0|%2e%2e
+0|a%00b
+0|*
+0|?
+0|{a,b}
+0|a*b
+0|#x
+0|postgres #c
+0|x:y:z
+0|a b
+1|aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+0|aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+0|a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/
+0|aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
